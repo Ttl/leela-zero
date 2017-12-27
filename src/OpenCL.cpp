@@ -349,8 +349,14 @@ void OpenCL_Network::convolve3(int channels, int outputs,
 
     cl::Kernel in_transform_kernel = opencl_thread_data.m_in_transform_kernel;
     cl::Kernel out_transform_kernel = opencl_thread_data.m_out_transform_kernel;
+    auto wavefront_size = opencl.m_wavefront_size;
 
     constexpr size_t tiles = (19 + 1) * (19 + 1) / 4;
+
+    auto wgs = tiles;
+    if (wgs % wavefront_size != 0) {
+        wgs += wavefront_size - (wgs % wavefront_size);
+    }
 
     float alphas[16];
     float betas[16];
@@ -373,7 +379,8 @@ void OpenCL_Network::convolve3(int channels, int outputs,
         in_transform_kernel.setArg(2, channels);
 
         queue.enqueueNDRangeKernel(in_transform_kernel, cl::NullRange,
-                                   cl::NDRange(tiles, channels));
+                                   cl::NDRange(wgs, channels),
+                                   cl::NDRange(wavefront_size, 1));
     } catch (const cl::Error &e) {
         std::cerr << "Error in convolve3: " << e.what() << ": "
 	        << e.err() << std::endl;
@@ -390,7 +397,7 @@ void OpenCL_Network::convolve3(int channels, int outputs,
                                 betas,
                                 bufferM(), offsets_m, tiles,
                                 16,
-                                &queue_plain);
+                                &queue_plain, nullptr);
 
     if (status != clblast::StatusCode::kSuccess) {
         std::cerr << "Error in GemmBatched: " <<
@@ -404,7 +411,8 @@ void OpenCL_Network::convolve3(int channels, int outputs,
         out_transform_kernel.setArg(2, outputs);
 
         queue.enqueueNDRangeKernel(out_transform_kernel, cl::NullRange,
-                                   cl::NDRange(tiles, outputs));
+                                   cl::NDRange(wgs, outputs),
+                                   cl::NDRange(wavefront_size, 1));
     } catch (const cl::Error &e) {
         std::cerr << "Error in convolve3: " << e.what() << ": "
 	        << e.err() << std::endl;
