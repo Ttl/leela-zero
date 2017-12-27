@@ -39,7 +39,7 @@
 #include "GTP.h"
 #include "Utils.h"
 
-#include <clblast.h>
+std::string sgemm_tuners = "KWID=16 MDIMAD=8 MDIMCD=8 NDIMBD=16 NDIMCD=16 PADA=1 PADB=1 PRECISION=32 VWMD=1 VWND=1 WGD=32";
 
 using namespace Utils;
 
@@ -202,6 +202,15 @@ static std::string sourceCode_utility = R"(
 )";
 
 
+size_t lcm(size_t a, size_t b) {
+    if (a % b == 0) {
+        return a;
+    }
+    size_t ret = a + (b - a % b);
+    assert(ret % b == 0);
+    return ret;
+}
+
 OpenCL opencl;
 OpenCL_Network opencl_net;
 thread_local ThreadData opencl_thread_data;
@@ -210,6 +219,7 @@ void OpenCL::ensure_thread_initialized() {
     if (!opencl_thread_data.m_is_initialized) {
         // Make kernels
         opencl_thread_data.m_in_transform_kernel = cl::Kernel(m_program, "in_transform");
+        opencl_thread_data.m_sgemm_kernel = cl::Kernel(m_program, "XgemmDirectBatchedTN");
         opencl_thread_data.m_out_transform_kernel = cl::Kernel(m_program, "out_transform");
         opencl_thread_data.m_batchnorm_kernel = cl::Kernel(m_program, "batchnorm");
         opencl_thread_data.m_commandqueue = cl::CommandQueue(cl::Context::getDefault(),
@@ -348,28 +358,22 @@ void OpenCL_Network::convolve3(int channels, int outputs,
                               weight_slice_t weights) {
 
     cl::Kernel in_transform_kernel = opencl_thread_data.m_in_transform_kernel;
+    cl::Kernel sgemm_kernel = opencl_thread_data.m_sgemm_kernel;
     cl::Kernel out_transform_kernel = opencl_thread_data.m_out_transform_kernel;
+
+    auto wgd = opencl.m_sgemm_wgd;
+    auto mdimcd = opencl.m_sgemm_mdimcd;
+    auto ndimcd = opencl.m_sgemm_ndimcd;
     auto wavefront_size = opencl.m_wavefront_size;
 
-    constexpr size_t tiles = (19 + 1) * (19 + 1) / 4;
+    assert(wgd != 0);
+    assert(ndimcd != 0);
+    assert(mdimcd != 0);
+    assert(wavefront_size != 0);
 
-    auto wgs = tiles;
-    if (wgs % wavefront_size != 0) {
-        wgs += wavefront_size - (wgs % wavefront_size);
-    }
+    constexpr int tiles = (19 + 1) * (19 + 1) / 4;
 
-    float alphas[16];
-    float betas[16];
-    size_t offsets_u[16];
-    size_t offsets_v[16];
-    size_t offsets_m[16];
-    for (auto i = 0; i < 16; i++) {
-        alphas[i] = 1.0f;
-        betas[i] = 0.0f;
-        offsets_u[i] = i*outputs*channels;
-        offsets_v[i] = i*channels*tiles;
-        offsets_m[i] = i*outputs*tiles;
-    }
+    auto wgs = lcm(tiles, wavefront_size);
 
     cl::CommandQueue & queue = opencl_thread_data.m_commandqueue;
 
@@ -387,22 +391,29 @@ void OpenCL_Network::convolve3(int channels, int outputs,
         throw;
     }
 
-    auto queue_plain = queue();
-    auto status = clblast::GemmBatched(clblast::Layout::kRowMajor,
-                                clblast::Transpose::kNo, clblast::Transpose::kNo,
-                                outputs, tiles, channels,
-                                alphas,
-                                weights[0](), offsets_u, channels,
-                                bufferV(), offsets_v, tiles,
-                                betas,
-                                bufferM(), offsets_m, tiles,
-                                16,
-                                &queue_plain, nullptr);
+    try {
+        sgemm_kernel.setArg(0, outputs);
+        sgemm_kernel.setArg(1, tiles);
+        sgemm_kernel.setArg(2, channels);
+        sgemm_kernel.setArg(3, weights[0]);
+        sgemm_kernel.setArg(4, bufferV);
+        sgemm_kernel.setArg(5, bufferM);
 
-    if (status != clblast::StatusCode::kSuccess) {
-        std::cerr << "Error in GemmBatched: " <<
-            static_cast<std::underlying_type<clblast::StatusCode>::type>(status)
-            << std::endl;
+        cl::NDRange local_sgemm = {mdimcd, ndimcd, 1};
+
+        auto m_ceil = lcm(outputs, wgd);
+        auto n_ceil = lcm(tiles, wgd);
+
+        cl::NDRange size_sgemm = {(m_ceil * mdimcd) / wgd,
+                                  (n_ceil * ndimcd) / wgd,
+                                  16};
+
+        queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange,
+                                    size_sgemm, local_sgemm);
+    } catch (const cl::Error &e) {
+        std::cerr << "Error in convolve3: " << e.what() << ": "
+	        << e.err() << std::endl;
+        throw;
     }
 
     try {
@@ -473,6 +484,51 @@ static std::string opencl_dev_type_to_string(T type) {
 static std::string trim(std::string trim_me) {
     boost::algorithm::trim(trim_me);
     return trim_me;
+}
+
+void OpenCL::process_tuners(std::string tuners) {
+    std::string buf;
+    std::stringstream ss(tuners);
+    std::size_t found;
+
+    bool wgd = false;
+    bool mdimcd = false;
+    bool ndimcd = false;
+    while (ss >> buf) {
+        found = buf.find("=");
+        if (found == std::string::npos) {
+            std::cerr << "Invalid tuner string: " << tuners << std::endl;
+            std::exit(-1);
+        }
+        std::string name = buf.substr(0, found);
+        auto value = std::stoi(buf.substr(found+1, std::string::npos));
+        if (name == "WGD") {
+            m_sgemm_wgd = value;
+            wgd = true;
+        }
+        if (name == "MDIMCD") {
+            m_sgemm_mdimcd = value;
+            mdimcd = true;
+        }
+        if (name == "NDIMCD") {
+            m_sgemm_ndimcd = value;
+            ndimcd = true;
+        }
+    }
+    if (!wgd || !mdimcd || !ndimcd) {
+        std::cerr << "Missing tuner parameters";
+        if (!wgd) {
+            std::cerr << " WGD";
+        }
+        if (!mdimcd) {
+            std::cerr << " MDIMCD";
+        }
+        if (!ndimcd) {
+            std::cerr << " NDIMCD";
+        }
+        std::cerr << std::endl;
+        std::exit(-1);
+    }
 }
 
 void OpenCL::initialize(void) {
@@ -584,10 +640,29 @@ void OpenCL::initialize(void) {
     //                       (std::istreambuf_iterator<char>()));
 
     // Make program of the source code in the context
+	std::string sourceCode_sgemm =
+        #include "clblast_level3/common.opencl"
+        #include "clblast_level3/level3.opencl"
+        #include "clblast_level3/copy_fast.opencl"
+        #include "clblast_level3/copy_pad.opencl"
+        #include "clblast_level3/transpose_fast.opencl"
+        #include "clblast_level3/transpose_pad.opencl"
+        #include "clblast_level3/xgemm_direct_part1.opencl"
+        #include "clblast_level3/xgemm_direct_part2.opencl"
+        #include "clblast_level3/xgemm_direct_part3.opencl"
+        #include "clblast_level3/xgemm_part1.opencl"
+        #include "clblast_level3/xgemm_part2.opencl"
+        #include "clblast_level3/xgemm_part3.opencl"
+        #include "clblast_level3/xgemm_part4.opencl"
+        #include "clblast_level3/xgemm_batched.opencl"
+        #include "clblast_level3/xgemm_direct_batched.opencl"
+	;
+
     try {
         m_program = cl::Program(sourceCode_config
                                 + sourceCode_convolve3
-                                + sourceCode_utility);
+                                + sourceCode_utility
+                                + sourceCode_sgemm);
     } catch (const cl::Error &e) {
         myprintf("Error getting kernels: %s: %d", e.what(), e.err());
         throw;
@@ -595,6 +670,14 @@ void OpenCL::initialize(void) {
     // Build program for these specific devices
     try {
 	    std::string args = "-cl-mad-enable -cl-fast-relaxed-math -cl-no-signed-zeros -cl-denorms-are-zero";
+
+        std::string buf;
+        std::stringstream ss(sgemm_tuners);
+
+        while (ss >> buf) {
+            args += " -D" + buf;
+        }
+
 #ifdef USE_HALF
         args += " -DUSE_HALF";
 #endif
@@ -606,6 +689,8 @@ void OpenCL::initialize(void) {
     }
 
     ensure_thread_initialized();
+
+    process_tuners(sgemm_tuners);
 
     m_wavefront_size =
         opencl_thread_data.m_batchnorm_kernel.getWorkGroupInfo<CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE>(

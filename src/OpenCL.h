@@ -49,6 +49,7 @@ private:
     bool m_is_initialized{false};
     cl::CommandQueue m_commandqueue;
     cl::Kernel m_in_transform_kernel;
+    cl::Kernel m_sgemm_kernel;
     cl::Kernel m_out_transform_kernel;
     cl::Kernel m_batchnorm_kernel;
     cl::Buffer m_inBuffer;
@@ -140,8 +141,11 @@ public:
     std::string get_device_name();
 
 private:
+    void process_tuners(std::string tuners);
+
     cl::Program m_program;
 
+    size_t m_sgemm_wgd, m_sgemm_mdimcd, m_sgemm_ndimcd;
     size_t m_wavefront_size{0};
     size_t m_max_workgroup_size{0};
     std::vector<size_t> m_max_workgroup_dims;
