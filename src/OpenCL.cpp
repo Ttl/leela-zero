@@ -39,8 +39,6 @@
 #include "GTP.h"
 #include "Utils.h"
 
-std::string sgemm_tuners = "KWID=16 MDIMAD=8 MDIMCD=8 NDIMBD=16 NDIMCD=16 PADA=1 PADB=1 PRECISION=32 VWMD=1 VWND=1 WGD=32";
-
 using namespace Utils;
 
 static std::string sourceCode_config = R"(
@@ -766,7 +764,7 @@ void OpenCL::initialize(void) {
 	    std::string args = "-cl-mad-enable -cl-fast-relaxed-math -cl-no-signed-zeros -cl-denorms-are-zero";
 
         std::string buf;
-        std::stringstream ss(sgemm_tuners);
+        std::stringstream ss(SGEMM_TUNERS);
 
         while (ss >> buf) {
             args += " -D" + buf;
@@ -784,7 +782,7 @@ void OpenCL::initialize(void) {
 
     ensure_thread_initialized();
 
-    process_tuners(sgemm_tuners);
+    process_tuners(SGEMM_TUNERS);
 
     m_wavefront_size =
         opencl_thread_data.m_batchnorm_kernel.getWorkGroupInfo<CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE>(
