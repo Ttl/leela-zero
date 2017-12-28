@@ -70,46 +70,69 @@ __kernel void in_transform(__global net_t *in, __global float *V, const int C) {
     const int block_y = block / WTILES;
 
     //Tiles overlap by 2
-    const int yin = 2 * block_y;
-    const int xin = 2 * block_x;
+    const int yin = 2 * block_y - 1;
+    const int xin = 2 * block_x - 1;
 
-    if (block_x < WTILES && block_y < WTILES && ch < C) {
+    if (block < P && ch < C) {
 
         //Cache input tile and handle zero padding
-        float x[16];
+        float x[4][4];
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                if ((yin-1+i) >= 0 && (xin-1+j) >= 0 && (yin-1+i) < H && (xin-1+j) < W) {
-                    x[i*4 + j] = vload_net_t(ch*(W*H) + (yin-1+i)*W + (xin-1+j), in);
+                if ((yin+i) >= 0 && (xin+j) >= 0 && (yin+i) < H && (xin+j) < W) {
+                    x[i][j] = vload_net_t(ch*(W*H) + (yin+i)*W + (xin+j), in);
                 } else {
-                    x[i*4 + j] = 0.0f;
+                    x[i][j] = 0.0f;
                 }
             }
         }
 
-        const int offset = ch*P + block_y*WTILES + block_x;
+        const int offset = ch*P + block;
 
 #define q(x_, y_) (x[((x_)*4 + (y_))])
 
-        V[(0*4 + 0)*C*P + offset] =  q(0,0) - q(0,2) - q(2,0) + q(2,2);
-        V[(0*4 + 1)*C*P + offset] =  q(0,1) + q(0,2) - q(2,1) - q(2,2);
-        V[(0*4 + 2)*C*P + offset] = -q(0,1) + q(0,2) + q(2,1) - q(2,2);
-        V[(0*4 + 3)*C*P + offset] =  q(0,1) - q(0,3) - q(2,1) + q(2,3);
+        float T1[4][4];
+        float T2[4][4];
 
-        V[(1*4 + 0)*C*P + offset] =  q(1,0) - q(1,2) + q(2,0) - q(2,2);
-        V[(1*4 + 1)*C*P + offset] =  q(1,1) + q(1,2) + q(2,1) + q(2,2);
-        V[(1*4 + 2)*C*P + offset] = -q(1,1) + q(1,2) - q(2,1) + q(2,2);
-        V[(1*4 + 3)*C*P + offset] =  q(1,1) - q(1,3) + q(2,1) - q(2,3);
+        T1[0][0] = x[0][0] - x[2][0];
+        T1[0][1] = x[0][1] - x[2][1];
+        T1[0][2] = x[0][2] - x[2][2];
+        T1[0][3] = x[0][3] - x[2][3];
+        T1[1][0] = x[1][0] + x[2][0];
+        T1[1][1] = x[1][1] + x[2][1];
+        T1[1][2] = x[1][2] + x[2][2];
+        T1[1][3] = x[1][3] + x[2][3];
+        T1[2][0] = x[2][0] - x[1][0];
+        T1[2][1] = x[2][1] - x[1][1];
+        T1[2][2] = x[2][2] - x[1][2];
+        T1[2][3] = x[2][3] - x[1][3];
+        T1[3][0] = x[1][0] - x[3][0];
+        T1[3][1] = x[1][1] - x[3][1];
+        T1[3][2] = x[1][2] - x[3][2];
+        T1[3][3] = x[1][3] - x[3][3];
 
-        V[(2*4 + 0)*C*P + offset] = -q(1,0) + q(1,2) + q(2,0) - q(2,2);
-        V[(2*4 + 1)*C*P + offset] = -q(1,1) - q(1,2) + q(2,1) + q(2,2);
-        V[(2*4 + 2)*C*P + offset] =  q(1,1) - q(1,2) - q(2,1) + q(2,2);
-        V[(2*4 + 3)*C*P + offset] = -q(1,1) + q(1,3) + q(2,1) - q(2,3);
+        T2[0][0] = T1[0][0] - T1[0][2];
+        T2[0][1] = T1[0][1] + T1[0][2];
+        T2[0][2] = T1[0][2] - T1[0][1];
+        T2[0][3] = T1[0][1] - T1[0][3];
+        T2[1][0] = T1[1][0] - T1[1][2];
+        T2[1][1] = T1[1][1] + T1[1][2];
+        T2[1][2] = T1[1][2] - T1[1][1];
+        T2[1][3] = T1[1][1] - T1[1][3];
+        T2[2][0] = T1[2][0] - T1[2][2];
+        T2[2][1] = T1[2][1] + T1[2][2];
+        T2[2][2] = T1[2][2] - T1[2][1];
+        T2[2][3] = T1[2][1] - T1[2][3];
+        T2[3][0] = T1[3][0] - T1[3][2];
+        T2[3][1] = T1[3][1] + T1[3][2];
+        T2[3][2] = T1[3][2] - T1[3][1];
+        T2[3][3] = T1[3][1] - T1[3][3];
 
-        V[(3*4 + 0)*C*P + offset] =  q(1,0) - q(1,2) - q(3,0) + q(3,2);
-        V[(3*4 + 1)*C*P + offset] =  q(1,1) + q(1,2) - q(3,1) - q(3,2);
-        V[(3*4 + 2)*C*P + offset] = -q(1,1) + q(1,2) + q(3,1) - q(3,2);
-        V[(3*4 + 3)*C*P + offset] =  q(1,1) - q(1,3) - q(3,1) + q(3,3);
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                V[(i*4 + j)*C*P + offset] = T2[i][j];
+            }
+        }
     }
 }
 
@@ -383,8 +406,7 @@ void OpenCL_Network::convolve3(int channels, int outputs,
         in_transform_kernel.setArg(2, channels);
 
         queue.enqueueNDRangeKernel(in_transform_kernel, cl::NullRange,
-                                   cl::NDRange(wgs, channels),
-                                   cl::NDRange(wavefront_size, 1));
+                                   cl::NDRange(wgs, channels));
     } catch (const cl::Error &e) {
         std::cerr << "Error in convolve3: " << e.what() << ": "
 	        << e.err() << std::endl;
@@ -422,8 +444,7 @@ void OpenCL_Network::convolve3(int channels, int outputs,
         out_transform_kernel.setArg(2, outputs);
 
         queue.enqueueNDRangeKernel(out_transform_kernel, cl::NullRange,
-                                   cl::NDRange(wgs, outputs),
-                                   cl::NDRange(wavefront_size, 1));
+                                   cl::NDRange(wgs, outputs));
     } catch (const cl::Error &e) {
         std::cerr << "Error in convolve3: " << e.what() << ": "
 	        << e.err() << std::endl;
