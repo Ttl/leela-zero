@@ -746,18 +746,9 @@ void OpenCL::initialize(void) {
 	std::string sourceCode_sgemm =
         #include "clblast_level3/common.opencl"
         #include "clblast_level3/level3.opencl"
-        #include "clblast_level3/copy_fast.opencl"
-        #include "clblast_level3/copy_pad.opencl"
-        #include "clblast_level3/transpose_fast.opencl"
-        #include "clblast_level3/transpose_pad.opencl"
         #include "clblast_level3/xgemm_direct_part1.opencl"
         #include "clblast_level3/xgemm_direct_part2.opencl"
         #include "clblast_level3/xgemm_direct_part3.opencl"
-        #include "clblast_level3/xgemm_part1.opencl"
-        #include "clblast_level3/xgemm_part2.opencl"
-        #include "clblast_level3/xgemm_part3.opencl"
-        #include "clblast_level3/xgemm_part4.opencl"
-        #include "clblast_level3/xgemm_batched.opencl"
         #include "clblast_level3/xgemm_direct_batched.opencl"
 	;
 
