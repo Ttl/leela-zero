@@ -85,10 +85,6 @@ __kernel void in_transform(__global net_t *in, __global float *V, const int C) {
             }
         }
 
-        const int offset = ch*P + block;
-
-#define q(x_, y_) (x[((x_)*4 + (y_))])
-
         float T1[4][4];
         float T2[4][4];
 
@@ -126,6 +122,8 @@ __kernel void in_transform(__global net_t *in, __global float *V, const int C) {
         T2[3][2] = T1[3][2] - T1[3][1];
         T2[3][3] = T1[3][1] - T1[3][3];
 
+        const int offset = ch*P + block;
+
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
                 V[(i*4 + j)*C*P + offset] = T2[i][j];
@@ -150,7 +148,7 @@ __kernel void out_transform(__global float *M, __global net_t *Y, int K) {
     int x = 2*block_x;
     int y = 2*block_y;
 
-    if (k < K && block_y < WTILES && block_x < WTILES) {
+    if (k < K && block < P) {
         int b = block_y * WTILES + block_x;
         float temp_m[16];
         for (int xi = 0; xi < 4; xi++) {
