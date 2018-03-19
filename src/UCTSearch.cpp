@@ -126,9 +126,10 @@ void UCTSearch::update_root() {
     auto start_nodes = m_root->count_nodes();
 #endif
 
-    if (!advance_to_new_rootstate() || !m_root) {
-        m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
-    }
+    //if (!advance_to_new_rootstate() || !m_root) {
+    //    m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
+    //}
+    m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
     // Clear last_rootstate to prevent accidental use.
     m_last_rootstate.reset(nullptr);
 
@@ -214,6 +215,13 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
         return;
     }
 
+    // Get total visit amount. We count rather
+    // than trust the root to avoid ttable issues.
+    auto sum_visits = 0.0;
+    for (const auto& node : parent.get_children()) {
+        sum_visits += node->get_visits();
+    }
+
     int movecount = 0;
     for (const auto& node : parent.get_children()) {
         // Always display at least two moves. In the case there is
@@ -225,11 +233,13 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
         tmpstate.play_move(node->get_move());
         std::string pv = move + " " + get_pv(tmpstate, *node);
 
-        myprintf("%4s -> %7d (V: %5.2f%%) (N: %5.2f%%) PV: %s\n",
+        myprintf("%4s -> %7d (V: %5.2f%%) (N: %5.2f%%) (Nn: %5.2f%%) (Vi: %7d) PV: %s\n",
             move.c_str(),
             node->get_visits(),
             node->get_visits() ? node->get_eval(color)*100.0f : 0.0f,
             node->get_score() * 100.0f,
+            node->get_visits()/sum_visits * 100.0f,
+            (int)sum_visits,
             pv.c_str());
     }
     tree_stats(parent);
@@ -615,9 +625,12 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
         // output some stats every few seconds
         // check if we should still search
-        if (elapsed_centis - last_update > 250) {
-            last_update = elapsed_centis;
-            dump_analysis(static_cast<int>(m_playouts));
+        //if (elapsed_centis - last_update > 250) {
+        //    last_update = elapsed_centis;
+        //    dump_analysis(static_cast<int>(m_playouts));
+        //}
+        if ( m_root->get_visits() % 100 == 0) {
+            dump_stats(m_rootstate, *m_root);
         }
         keeprunning  = is_running();
         keeprunning &= !stop_thinking(elapsed_centis, time_for_move);
