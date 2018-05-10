@@ -204,6 +204,12 @@ void UCTNode::prepare_root_node(int color,
     if (cfg_noise) {
         // Adjust the Dirichlet noise's alpha constant to the board size
         auto alpha = 0.03f * 361.0f / BOARD_SQUARES;
+        Utils::myprintf("Policy scores:\n");
+        for (auto& child : m_children) {
+            auto move = root_state.move_to_text(child->get_move());
+            Utils::myprintf("%s: %f\n", move.c_str(), child->get_score());
+        }
+        Utils::myprintf("\n");
         dirichlet_noise(0.25f, alpha);
     }
 }
