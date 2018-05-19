@@ -131,10 +131,17 @@ public:
         return m_layers.size();
     }
 
+    void forward_internal(const std::vector<net_t>& input,
+            std::vector<net_t>& output_pol,
+            std::vector<net_t>& output_val,
+            OpenCLContext & opencl_context,
+            const int batch_size=1);
+
     void forward(const std::vector<net_t>& input,
             std::vector<net_t>& output_pol,
             std::vector<net_t>& output_val,
-            OpenCLContext & opencl_context);
+            OpenCLContext & opencl_context,
+            const int batch_size=1);
 
 private:
     using weight_slice_t = std::vector<cl::Buffer>::const_iterator;
@@ -153,14 +160,16 @@ private:
                     cl::Buffer* bufferResidual,
                     weight_slice_t bn_weights,
                     bool skip_in_transform,
-                    bool fuse_in_transform, bool store_inout);
+                    bool fuse_in_transform, bool store_inout,
+                    int batch_size);
 
     void convolve1(OpenCLContext & opencl_context,
                   int channels, int outputs,
                   cl::Buffer& bufferInput,
                   cl::Buffer& bufferOutput,
                   cl::Buffer& bufferMerge,
-                  weight_slice_t weights);
+                  weight_slice_t weights,
+                  int batch_size);
 
     OpenCL & m_opencl;
 

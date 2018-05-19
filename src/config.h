@@ -72,8 +72,13 @@
  * OpenCL drivers - the BLAS version is much faster for those.
  */
 #ifndef USE_CPU_ONLY
-//#define USE_OPENCL
+#define USE_OPENCL
 #endif
+
+/* Maximum supported batch size for OpenCL.
+ */
+#define MAX_BATCH 8
+
 /*
  * USE_TUNER: Expose some extra command line parameters that allow tuning the
  * search algorithm.

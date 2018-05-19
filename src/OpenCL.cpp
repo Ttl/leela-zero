@@ -69,7 +69,9 @@ static std::string sourceCode_convolve1 = R"(
                    __global net_t * restrict merge,
                    __global const net_t * restrict weights,
                    __local float * channel_buff,
-                   __local float * row_buff) {
+                   __local float * row_buff,
+                   int input_offset,
+                   int merge_offset) {
         // cl::NDRange global(channels, outputs, row);
         const int c   = get_global_id(0);  // channel
         const int o   = get_global_id(1);  // output
@@ -95,11 +97,12 @@ static std::string sourceCode_convolve1 = R"(
             // strip-row
             for (int w = 0; w < width; w++) {
                 channel_buff[lx * width + w] =
-                    vload_net_t((c * height + row) * width + w, in);
+                    vload_net_t((c * height + row) * width + w + input_offset, in);
             }
         } else if (out_buff_size >= BOARD_SIZE && ly < BOARD_SIZE) {
             // Every thread copies a column
-            channel_buff[lx * width + ly] = vload_net_t((c * height + row) * width + ly, in);
+            channel_buff[lx * width + ly] = vload_net_t((c * height + row) * width +
+                ly + input_offset, in);
         }
         // Copy the filter we are applying locally
         __private float filter_buff = vload_net_t((o * channels + c), weights);
@@ -125,7 +128,8 @@ static std::string sourceCode_convolve1 = R"(
                     val += row_buff[(ly * chan_buff_size + 5) * row_buff_size + lx];
                     val += row_buff[(ly * chan_buff_size + 6) * row_buff_size + lx];
                     val += row_buff[(ly * chan_buff_size + 7) * row_buff_size + lx];
-                    vstore_net_t(val, (((c >> chan_shift) * height + row) * width + out_cw + lx) * outputs + o, merge);
+                    vstore_net_t(val, (((c >> chan_shift) * height + row) * width +
+                        out_cw + lx) * outputs + o + merge_offset, merge);
                 }
                 out_cw  += row_buff_size;
                 out_lane = 0;
@@ -140,6 +144,7 @@ __kernel void merge(
         // cl::NDRange global(outputs, BOARD_SQUARES);
         const int gx = get_global_id(0);
         const int gy = get_global_id(1);
+        const int batch = get_global_id(2);
         const int output = gx;
         const int b = gy;
         const int outputs = get_global_size(0);
@@ -148,9 +153,10 @@ __kernel void merge(
         const int o = output;
         float sum = 0;
         for (int c = 0; c < channels; c++) {
-            sum += vload_net_t((c * BOARD_SQUARES + b) * outputs + o, in);
+            sum += vload_net_t(batch * channels * BOARD_SQUARES * outputs +
+                (c * BOARD_SQUARES + b) * outputs + o, in);
         }
-        vstore_net_t(sum, o * BOARD_SQUARES + b, out);
+        vstore_net_t(sum, batch * outputs * BOARD_SQUARES + o * BOARD_SQUARES + b, out);
     }
 )";
 
@@ -205,7 +211,7 @@ __kernel void in_transform(__global net_t * restrict in, __global net_t * restri
 
     const int block = get_global_id(0);
     const int ch = get_global_id(1);
-    const int chT = ch*(T);
+    const int batch = get_global_id(2);
 
     const int block_x = block % WTILES;
     const int block_y = block / WTILES;
@@ -222,14 +228,14 @@ __kernel void in_transform(__global net_t * restrict in, __global net_t * restri
                 int a = xin + j;
                 int b = yin + i;
                 if (b >= 0 && a >= 0 && b < H && a < W) {
-                    x[i][j] = vload_net_t(chT + b*W + a, in);
+                    x[i][j] = vload_net_t(batch*C*T + ch*T + b*W + a, in);
                 } else {
                     x[i][j] = 0.0f;
                 }
             }
         }
 
-        const int offset = ch*Ppad + block;
+        const int offset = batch*16*Cpad*Ppad + ch*Ppad + block;
         __in_transform_eq(x, V, offset, CPpad);
     }
 }
@@ -243,8 +249,9 @@ void __out_transform_eq(__global const net_t * restrict M, float o[4],
     const int b = block_y * WTILES + block_x;
     const int KPpad = Kpad * Ppad;
     const int k = get_global_id(0);
+    const int batch = get_global_id(2);
     float temp_m[16];
-    for (int xn = 0, xnKPpad = b*Kpad + k; xn < 16; xn++, xnKPpad += KPpad) {
+    for (int xn = 0, xnKPpad = batch*16*Ppad*Kpad + b*Kpad + k; xn < 16; xn++, xnKPpad += KPpad) {
         temp_m[xn] = vload_net_t(xnKPpad, M);
     }
 
@@ -277,8 +284,9 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
     const int WTILES = (W + 1) / 2;
     const int P = WTILES * WTILES;
 
-    int k = get_global_id(0);
-    int block = get_global_id(1);
+    const int k = get_global_id(0);
+    const int block = get_global_id(1);
+    const int batch = get_global_id(2);
 
     const int block_x = block % WTILES;
     const int block_y = block / WTILES;
@@ -287,7 +295,7 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
     int y = 2*block_y;
     int a_ind = (y)*W + (x);
     if (k < K && block < P) {
-        const int kHW = k * W * H;
+        const int kHW = batch*Kpad*W*H + k*W*H;
         float o[4];
         __out_transform_eq(M, o, Kpad, Ppad, block_x, block_y);
 
@@ -331,6 +339,7 @@ __kernel void out_transform_fused_bn_in(
     const int k = get_global_id(0);
     const int kg = get_local_id(0);
     const int block = get_global_id(1);
+    const int batch = get_global_id(2);
 
     const int block_x = block % WTILES;
     const int block_y = block / WTILES;
@@ -347,7 +356,7 @@ __kernel void out_transform_fused_bn_in(
     if (k < K && block < P) {
         const int a[4] = {a_ind, a_ind+1, a_ind+W, a_ind+W+1};
         const bool pred[4] = { 1, x+1 < W, y+1 < H, x+1 < W & y+1 < H};
-        const int kHW = k * W * H;
+        const int kHW = batch*Kpad*W*H + k*W*H;
 
         float o[4];
         __out_transform_eq(M, o, Kpad, Ppad, block_x, block_y);
@@ -388,7 +397,7 @@ __kernel void out_transform_fused_bn_in(
             }
         }
 
-        const int offset = k*Ppad + block;
+        const int offset = batch*16*Kpad*Ppad + k*Ppad + block;
         __in_transform_eq(xx, V, offset, CPpad);
     }
 }
@@ -453,10 +462,11 @@ void OpenCL_Network::add_weights(size_t layer,
         const_cast<net_t*>(converted_weights.data()));
 }
 
-void OpenCL_Network::forward(const std::vector<net_t>& input,
+void OpenCL_Network::forward_internal(const std::vector<net_t>& input,
                              std::vector<net_t>& output_pol,
                              std::vector<net_t>& output_val,
-                             OpenCLContext & opencl_context) {
+                             OpenCLContext & opencl_context,
+                             const int batch_size) {
     constexpr auto width = BOARD_SIZE;
     constexpr auto height = BOARD_SIZE;
     constexpr auto tiles = WINOGRAD_P;
@@ -482,9 +492,9 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
         const auto n_ceil = ceilMultiple(ceilMultiple(tiles, nwg), vwn);
 
         const auto alloc_inSize =
-            m_ceil * m_ceil *  max_channels * sizeof(net_t);
+            MAX_BATCH * m_ceil * m_ceil * max_channels * sizeof(net_t);
         const auto alloc_vm_size =
-            WINOGRAD_TILE * m_ceil * n_ceil * sizeof(net_t);
+            MAX_BATCH * WINOGRAD_TILE * m_ceil * n_ceil * sizeof(net_t);
 
         auto v_zeros = std::vector<net_t>(alloc_vm_size);
 
@@ -504,10 +514,10 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
 
         opencl_context.m_pinnedOutBuffer_pol = cl::Buffer(
             m_opencl.m_context,
-            CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR, finalSize_pol);
+            CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR, MAX_BATCH * finalSize_pol);
         opencl_context.m_pinnedOutBuffer_val = cl::Buffer(
             m_opencl.m_context,
-            CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR, finalSize_val);
+            CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR, MAX_BATCH * finalSize_val);
 
         opencl_context.m_buffers_allocated = true;
     }
@@ -544,7 +554,9 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                      conv_weights,
                      nullptr,
                      bn_weights,
-                     skip_in_trans, skip_next_in_trans, true);
+                     skip_in_trans, skip_next_in_trans, true,
+                     batch_size);
+
             skip_in_trans = skip_next_in_trans;
         } else if (layer.is_residual_block) {
             assert(layer.channels == layer.outputs);
@@ -563,7 +575,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                       conv1_weights,
                       nullptr,
                       bn1_weights,
-                      skip_in_trans, true, false);
+                      skip_in_trans, true, false,
+                      batch_size);
 
             auto skip_next_in_trans = false;
             if (niter->is_residual_block) {
@@ -579,7 +592,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                       conv2_weights,
                       &inBuffer,
                       bn2_weights,
-                      true, skip_next_in_trans, true);
+                      true, skip_next_in_trans, true,
+                      batch_size);
             skip_in_trans = skip_next_in_trans;
         } else {
             assert(layer.is_convolve1);
@@ -596,16 +610,17 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                     inBuffer,
                     out_buffer,
                     VBuffer,
-                    begin(layer.weights));
+                    begin(layer.weights),
+                    batch_size);
         }
     }
 
     auto pinnedOutBufferHost_pol = queue.enqueueMapBuffer(
         opencl_context.m_pinnedOutBuffer_pol, CL_FALSE,
-        CL_MAP_READ, 0, finalSize_pol);
+        CL_MAP_READ, 0, batch_size * finalSize_pol);
     auto pinnedOutBufferHost_val = queue.enqueueMapBuffer(
         opencl_context.m_pinnedOutBuffer_val, CL_FALSE,
-        CL_MAP_READ, 0, finalSize_val);
+        CL_MAP_READ, 0, batch_size * finalSize_val);
 
     {
         // Finish call is usually a busy wait. When using multiple threads
@@ -614,14 +629,50 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
         queue.finish();
     }
 
-    std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, finalSize_pol);
-    std::memcpy(output_val.data(), pinnedOutBufferHost_val, finalSize_val);
+    std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, batch_size * finalSize_pol);
+    std::memcpy(output_val.data(), pinnedOutBufferHost_val, batch_size * finalSize_val);
 
     queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_pol,
             pinnedOutBufferHost_pol);
     queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_val,
             pinnedOutBufferHost_val);
 
+}
+
+void OpenCL_Network::forward(const std::vector<net_t>& input,
+                             std::vector<net_t>& output_pol,
+                             std::vector<net_t>& output_val,
+                             OpenCLContext & opencl_context,
+                             const int batch_size) {
+
+    constexpr auto batch = 4;
+    std::vector<net_t> input2;
+
+    for (auto j=0; j < batch;j++) {
+        for(auto i=0; i < input.size(); i++) {
+            input2.emplace_back(input[i]);
+        }
+    }
+
+    std::vector<net_t> pol2(batch * 2 * (BOARD_SQUARES));
+    std::vector<net_t> val2(batch * (BOARD_SQUARES));
+
+    forward_internal(input2, pol2, val2, opencl_context, batch);
+
+    for (auto i = 0; i < BOARD_SQUARES; i++) {
+        for (auto j=0; j < batch; j++) {
+            assert(val2[i] == val2[i + BOARD_SQUARES * j]);
+        }
+    }
+
+    for (auto i = 0; i < 2 * BOARD_SQUARES; i++) {
+        for (auto j=0; j < batch; j++) {
+            assert(pol2[i] == pol2[i + 2 * BOARD_SQUARES * j]);
+        }
+    }
+
+    std::memcpy(output_pol.data(), pol2.data() + 2 * BOARD_SQUARES, 2 * BOARD_SQUARES * sizeof(net_t));
+    std::memcpy(output_val.data(), val2.data() + BOARD_SQUARES, BOARD_SQUARES * sizeof(net_t));
 }
 
 void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
@@ -635,7 +686,8 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
                               weight_slice_t bn_weights,
                               bool skip_in_transform,
                               bool fuse_in_transform,
-                              bool store_inout) {
+                              bool store_inout,
+                              int batch_size) {
 
     cl::Kernel & in_transform_kernel = opencl_context.m_in_transform_kernel;
     cl::Kernel & sgemm_kernel = opencl_context.m_sgemm_kernel;
@@ -682,7 +734,7 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
             in_transform_kernel.setArg(4, n_ceil);
 
             queue.enqueueNDRangeKernel(in_transform_kernel, cl::NullRange,
-                                       cl::NDRange(wgs, channels));
+                                       cl::NDRange(wgs, channels, batch_size));
         } catch (const cl::Error &e) {
             std::cerr << "Error in convolve3: " << e.what() << ": "
                 << e.err() << std::endl;
@@ -702,7 +754,7 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
 
         cl::NDRange size_sgemm = {(m_ceil * mdimc) / mwg,
                                   (n_ceil * ndimc) / nwg,
-                                  cl::size_type(WINOGRAD_TILE)};
+                                  batch_size * cl::size_type(WINOGRAD_TILE)};
 
         queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange,
                                    size_sgemm, local_sgemm);
@@ -741,8 +793,8 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
 
             queue.enqueueNDRangeKernel(out_transform_bn_in_kernel,
                                        cl::NullRange,
-                                       cl::NDRange(outputs, wgs),
-                                       cl::NDRange(dim_size, wgs));
+                                       cl::NDRange(outputs, wgs, batch_size),
+                                       cl::NDRange(dim_size, wgs, 1));
         } else {
             out_transform_bn_kernel.setArg(0, bufferM);
             out_transform_bn_kernel.setArg(1, bufferOut);
@@ -758,7 +810,7 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
             out_transform_bn_kernel.setArg(7, bn_weights[1]);
 
             queue.enqueueNDRangeKernel(out_transform_bn_kernel, cl::NullRange,
-                                       cl::NDRange(outputs, wgs));
+                                       cl::NDRange(outputs, wgs, batch_size));
         }
     } catch (const cl::Error &e) {
         std::cerr << "Error in convolve3: " << e.what() << ": "
@@ -772,7 +824,8 @@ void OpenCL_Network::convolve1(OpenCLContext & opencl_context,
                               cl::Buffer& bufferInput,
                               cl::Buffer& bufferOutput,
                               cl::Buffer& bufferMerge,
-                              weight_slice_t weights) {
+                              weight_slice_t weights,
+                              int batch_size) {
     // The size of the board is defined at compile time
     constexpr int width = BOARD_SIZE;
     constexpr int boardsize = BOARD_SQUARES;
@@ -803,20 +856,25 @@ void OpenCL_Network::convolve1(OpenCLContext & opencl_context,
 
     cl::CommandQueue & queue = opencl_context.m_commandqueue;
 
-    try {
-        m_convolve_kernel->setArg(0, bufferInput);
-        m_convolve_kernel->setArg(1, bufferMerge);
-        m_convolve_kernel->setArg(2, weights[0]);
-        m_convolve_kernel->setArg(3, cl::Local(stripSize * channelGroup * rowGroup));
-        m_convolve_kernel->setArg(4, cl::Local(rowSize));
+    //TODO: Proper batching support
+    for (auto batch = 0; batch < batch_size; batch++) {
+        try {
+            m_convolve_kernel->setArg(0, bufferInput);
+            m_convolve_kernel->setArg(1, bufferMerge);
+            m_convolve_kernel->setArg(2, weights[0]);
+            m_convolve_kernel->setArg(3, cl::Local(stripSize * channelGroup * rowGroup));
+            m_convolve_kernel->setArg(4, cl::Local(rowSize));
+            m_convolve_kernel->setArg(5, batch * BOARD_SQUARES * channels);
+            m_convolve_kernel->setArg(6, batch * BOARD_SQUARES * (channels >> channelShift) * outputs);
 
-        queue.enqueueNDRangeKernel(*m_convolve_kernel, cl::NullRange,
-                                   cl::NDRange(channels, outputs, rowTiles),
-                                   cl::NDRange(channelGroup, outputGroup, rowGroup));
-    } catch (const cl::Error &e) {
-        std::cerr << "Error in convolve1: " << e.what() << ": "
-                  << e.err() << std::endl;
-        throw;
+            queue.enqueueNDRangeKernel(*m_convolve_kernel, cl::NullRange,
+                                       cl::NDRange(channels, outputs, rowTiles),
+                                       cl::NDRange(channelGroup, outputGroup, rowGroup));
+        } catch (const cl::Error &e) {
+            std::cerr << "Error in convolve1: " << e.what() << ": "
+                      << e.err() << std::endl;
+            throw;
+        }
     }
 
     cl::Kernel & merge_kernel = opencl_context.m_merge_kernel;
@@ -828,8 +886,8 @@ void OpenCL_Network::convolve1(OpenCLContext & opencl_context,
         merge_kernel.setArg(2, channels >> channelShift);
 
         queue.enqueueNDRangeKernel(merge_kernel, cl::NullRange,
-                                   cl::NDRange(outputs, boardsize),
-                                   cl::NDRange(std::min(8, outputs), BOARD_SIZE));
+                                   cl::NDRange(outputs, boardsize, batch_size),
+                                   cl::NDRange(std::min(8, outputs), BOARD_SIZE, 1));
     } catch (const cl::Error &e) {
         std::cerr << "Error in merge: " << e.what() << ": "
                   << e.err() << std::endl;

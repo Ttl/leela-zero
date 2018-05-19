@@ -27,7 +27,9 @@ void XgemmBatched(const int kSizeM, const int kSizeN, const int kSizeK,
   const int batch = get_group_id(2);
 
   // Sets the offsets
-  const int a_offset = kSizeM*kSizeK*batch;
+  // a_offset is for weights which is common for every batch
+  // Take mod 16 since there are 16 values in every batch
+  const int a_offset = kSizeM*kSizeK*(batch%16);
   const int b_offset = kSizeK*kSizeN*batch;
   const int c_offset = kSizeM*kSizeN*batch;
   const __global realM* restrict agm_ = &agm[a_offset / VWM];
