@@ -37,6 +37,9 @@ public:
     using NNPlanes = std::vector<BoardPlane>;
     NNPlanes planes;
     std::vector<float> probabilities;
+    std::vector<float> net_evals;
+    std::vector<float> scores;
+    float root_eval;
     int to_move;
     float net_winrate;
     float root_uct_winrate;

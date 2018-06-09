@@ -265,11 +265,11 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     }
 
     auto numerator = std::sqrt(double(parentvisits));
-    auto fpu_reduction = 0.0f;
+    auto fpu_reduction = -1.0f;
     // Lower the expected eval for moves that are likely not the best.
     // Do not do this if we have introduced noise at this node exactly
     // to explore more.
-    if (!is_root || !cfg_noise) {
+    if (!is_root) {
         fpu_reduction = cfg_fpu_reduction * std::sqrt(total_visited_policy);
     }
     // Estimated eval for unknown nodes = original parent NN eval - reduction

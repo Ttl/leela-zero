@@ -168,6 +168,8 @@ void Training::record(GameState& state, UCTNode& root) {
     step.bestmove_visits = best_node.get_visits();
 
     step.probabilities.resize((BOARD_SQUARES) + 1);
+    step.net_evals.resize((BOARD_SQUARES) + 1);
+    step.scores.resize((BOARD_SQUARES) + 1);
 
     // Get total visit amount. We count rather
     // than trust the root to avoid ttable issues.
@@ -184,14 +186,26 @@ void Training::record(GameState& state, UCTNode& root) {
         return;
     }
 
+    auto color = state.board.get_to_move();
+    step.root_eval = root.get_net_eval(color);
+
     for (const auto& child : root.get_children()) {
         auto prob = static_cast<float>(child->get_visits() / sum_visits);
+        auto score = static_cast<float>(child->get_score());
         auto move = child->get_move();
+        auto eval = -1.0f;
+        if (prob > 0) {
+            eval = child->get_net_eval(color);
+        }
         if (move != FastBoard::PASS) {
             auto xy = state.board.get_xy(move);
             step.probabilities[xy.second * BOARD_SIZE + xy.first] = prob;
+            step.scores[xy.second * BOARD_SIZE + xy.first] = score;
+            step.net_evals[xy.second * BOARD_SIZE + xy.first] = eval;
         } else {
             step.probabilities[BOARD_SQUARES] = prob;
+            step.scores[BOARD_SQUARES] = score;
+            step.net_evals[BOARD_SQUARES] = eval;
         }
     }
 
@@ -285,7 +299,7 @@ void Training::dump_debug(OutputChunker& outchunk) {
     auto debug_str = std::string{};
     {
         auto out = std::stringstream{};
-        out << "2" << std::endl; // File format version
+        out << "3" << std::endl; // File format version
         out << cfg_resignpct << " " << cfg_weightsfile << std::endl;
         debug_str.append(out.str());
     }
@@ -294,7 +308,26 @@ void Training::dump_debug(OutputChunker& outchunk) {
         out << step.net_winrate
             << " " << step.root_uct_winrate
             << " " << step.child_uct_winrate
-            << " " << step.bestmove_visits << std::endl;
+            << " " << step.bestmove_visits
+            << " " << step.root_eval << std::endl;
+
+        for (auto it = begin(step.net_evals);
+            it != end(step.net_evals); ++it) {
+            out << *it;
+            if (next(it) != end(step.net_evals)) {
+                out << " ";
+            }
+        }
+        out << std::endl;
+
+        for (auto it = begin(step.scores);
+            it != end(step.scores); ++it) {
+            out << *it;
+            if (next(it) != end(step.scores)) {
+                out << " ";
+            }
+        }
+        out << std::endl;
         debug_str.append(out.str());
     }
     outchunk.append(debug_str);
