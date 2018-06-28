@@ -69,15 +69,22 @@ static std::string sourceCode_convolve1 = R"(
                    __global net_t * restrict merge,
                    __global const net_t * restrict weights,
                    __local float * channel_buff,
-                   __local float * row_buff,
-                   int input_offset,
-                   int merge_offset) {
+                   __local float * row_buff) {
+
         // cl::NDRange global(channels, outputs, row);
         const int c   = get_global_id(0);  // channel
         const int o   = get_global_id(1);  // output
-        const int row = get_global_id(2);  // row
+        const int row_batch = get_global_id(2);  // row * batch_size
+
+        const int row = row_batch % BOARD_SIZE;
+        const int batch = row_batch / BOARD_SIZE;
+
         const int channels = get_global_size(0);
         const int outputs  = get_global_size(1);
+
+        const int input_offset = batch * BOARD_SQUARES * channels;
+        const int merge_offset = batch * BOARD_SQUARES * (channels >> 3) * outputs;
+
         // cl::NDRange local(2, (1->32), 1);
         const int lx = get_local_id(0);
         const int ly = get_local_id(1);
@@ -213,7 +220,6 @@ __kernel void in_transform(__global net_t * restrict in, __global net_t * restri
     const int block = get_global_id(0);
     const int ch = get_global_id(1);
     const int batch = get_global_id(2);
-    const int batch_size = get_global_size(2);
 
     const int block_x = block % WTILES;
     const int block_y = block / WTILES;
@@ -230,7 +236,7 @@ __kernel void in_transform(__global net_t * restrict in, __global net_t * restri
                 int a = xin + j;
                 int b = yin + i;
                 if (b >= 0 && a >= 0 && b < H && a < W) {
-                    x[i][j] = vload_net_t(batch * C * BOARD_SQUARES + 
+                    x[i][j] = vload_net_t(batch * C * BOARD_SQUARES +
                         ch * BOARD_SQUARES + b * W + a, in);
                 } else {
                     x[i][j] = 0.0f;
@@ -864,25 +870,20 @@ void OpenCL_Network::convolve1(int channels, int outputs,
 
     cl::CommandQueue & queue = opencl_thread_data.m_commandqueue;
 
-    //TODO: Proper batching support
-    for (auto batch = 0; batch < batch_size; batch++) {
-        try {
-            m_convolve_kernel->setArg(0, bufferInput);
-            m_convolve_kernel->setArg(1, bufferMerge);
-            m_convolve_kernel->setArg(2, weights[0]);
-            m_convolve_kernel->setArg(3, cl::Local(stripSize * channelGroup * rowGroup));
-            m_convolve_kernel->setArg(4, cl::Local(rowSize));
-            m_convolve_kernel->setArg(5, batch * BOARD_SQUARES * channels);
-            m_convolve_kernel->setArg(6, batch * BOARD_SQUARES * (channels >> channelShift) * outputs);
+    try {
+        m_convolve_kernel->setArg(0, bufferInput);
+        m_convolve_kernel->setArg(1, bufferMerge);
+        m_convolve_kernel->setArg(2, weights[0]);
+        m_convolve_kernel->setArg(3, cl::Local(stripSize * channelGroup * rowGroup));
+        m_convolve_kernel->setArg(4, cl::Local(rowSize));
 
-            queue.enqueueNDRangeKernel(*m_convolve_kernel, cl::NullRange,
-                                       cl::NDRange(channels, outputs, rowTiles),
-                                       cl::NDRange(channelGroup, outputGroup, rowGroup));
-        } catch (const cl::Error &e) {
-            std::cerr << "Error in convolve1: " << e.what() << ": "
-                      << e.err() << std::endl;
-            throw;
-        }
+        queue.enqueueNDRangeKernel(*m_convolve_kernel, cl::NullRange,
+                                   cl::NDRange(channels, outputs, batch_size * rowTiles),
+                                   cl::NDRange(channelGroup, outputGroup, rowGroup));
+    } catch (const cl::Error &e) {
+        std::cerr << "Error in convolve1: " << e.what() << ": "
+                  << e.err() << std::endl;
+        throw;
     }
 
     cl::Kernel & merge_kernel = opencl_thread_data.m_merge_kernel;
