@@ -55,8 +55,9 @@ public:
     static constexpr auto OUTPUTS_POLICY = 2;
     static constexpr auto OUTPUTS_VALUE = 1;
 
-    // Winograd filter transformation changes 3x3 filters to 4x4
-    static constexpr auto WINOGRAD_ALPHA = 4;
+    // Winograd filter transformation changes 3x3 filters to M + 3 - 1
+    static constexpr auto WINOGRAD_M = 4;
+    static constexpr auto WINOGRAD_ALPHA = WINOGRAD_M + 3 - 1;
     static constexpr auto WINOGRAD_TILE = WINOGRAD_ALPHA * WINOGRAD_ALPHA;
 
     void initialize(int playouts, const std::string & weightsfile);
