@@ -513,7 +513,7 @@ void OpenCL_Network::add_weights(size_t layer,
         const_cast<net_t*>(converted_weights.data()));
 }
 
-void OpenCL_Network::forward_internal(const std::vector<net_t>& input,
+void OpenCL_Network::forward(const std::vector<net_t>& input,
                              std::vector<net_t>& output_pol,
                              std::vector<net_t>& output_val,
                              OpenCLContext & opencl_context,
@@ -691,44 +691,6 @@ void OpenCL_Network::forward_internal(const std::vector<net_t>& input,
 
 }
 
-void OpenCL_Network::forward(const std::vector<net_t>& input,
-                             std::vector<net_t>& output_pol,
-                             std::vector<net_t>& output_val,
-                             OpenCLContext & opencl_context,
-                             const int batch_size) {
-
-    constexpr auto batch = 4;
-    std::vector<net_t> input2;
-
-    for (auto j=0; j < batch;j++) {
-        for(auto i=0; i < input.size(); i++) {
-            input2.emplace_back(input[i]);
-        }
-    }
-
-    std::vector<net_t> pol2(batch * 2 * (BOARD_SQUARES));
-    std::vector<net_t> val2(batch * (BOARD_SQUARES));
-
-    forward_internal(input2, pol2, val2, opencl_context, batch);
-
-    for (auto i = 0; i < BOARD_SQUARES; i++) {
-        for (auto j=0; j < batch; j++) {
-            assert(val2[i] == val2[i + BOARD_SQUARES * j]);
-        }
-    }
-
-    for (auto i = 0; i < 2 * BOARD_SQUARES; i++) {
-        for (auto j=0; j < batch; j++) {
-            assert(pol2[i] == pol2[i + 2 * BOARD_SQUARES * j]);
-        }
-    }
-
-    const int output_batch = 3;
-
-    std::memcpy(output_pol.data(), pol2.data() + output_batch * 2 * BOARD_SQUARES, 2 * BOARD_SQUARES * sizeof(net_t));
-    std::memcpy(output_val.data(), val2.data() + output_batch * BOARD_SQUARES, BOARD_SQUARES * sizeof(net_t));
-}
-
 void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
                               int channels, int outputs,
                               cl::Buffer& bufferIn,
@@ -773,6 +735,7 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
     constexpr auto height = BOARD_SIZE;
 
     auto wgs = ceilMultiple(batch_size * tiles, wavefront_size);
+    auto wgs_single = ceilMultiple(tiles, wavefront_size);
 
     auto m_ceil = int(ceilMultiple(ceilMultiple(outputs, mwg), vwm));
     auto n_ceil = int(ceilMultiple(ceilMultiple(batch_size * tiles, nwg), vwn));
@@ -849,8 +812,8 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
 
             queue.enqueueNDRangeKernel(out_transform_bn_in_kernel,
                                        cl::NullRange,
-                                       cl::NDRange(outputs, wgs, batch_size),
-                                       cl::NDRange(dim_size, wgs, 1));
+                                       cl::NDRange(outputs, wgs_single, batch_size),
+                                       cl::NDRange(dim_size, wgs_single, 1));
         } else {
             out_transform_bn_kernel.setArg(0, bufferM);
             out_transform_bn_kernel.setArg(1, bufferOut);

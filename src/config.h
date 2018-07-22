@@ -77,7 +77,11 @@
 
 /* Maximum supported batch size for OpenCL.
  */
-#define MAX_BATCH 8
+#define MAX_BATCH 1
+
+#if (MAX_BATCH != 1)
+#error "MAX_BATCH != 1 not implemented"
+#endif
 
 /*
  * USE_TUNER: Expose some extra command line parameters that allow tuning the

@@ -127,12 +127,6 @@ public:
         return m_layers.size();
     }
 
-    void forward_internal(const std::vector<net_t>& input,
-            std::vector<net_t>& output_pol,
-            std::vector<net_t>& output_val,
-            OpenCLContext & opencl_context,
-            const int batch_size=1);
-
     void forward(const std::vector<net_t>& input,
             std::vector<net_t>& output_pol,
             std::vector<net_t>& output_val,
