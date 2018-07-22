@@ -228,7 +228,7 @@ void __in_transform_eq(float x[WINOGRAD_ALPHA][WINOGRAD_ALPHA], __global net_t *
 
 __kernel void in_transform(__global net_t * restrict in, __global net_t * restrict V,
                            const int C, const int Cpad,
-                           const int Ppad) {
+                           const int Ppad, const int batch_size) {
     const int W = BOARD_SIZE;
     const int H = BOARD_SIZE;
     const int P = WTILES * WTILES;
@@ -236,16 +236,16 @@ __kernel void in_transform(__global net_t * restrict in, __global net_t * restri
 
     const int block = get_global_id(0);
     const int ch = get_global_id(1);
-    const int batch = get_global_id(2);
 
-    const int block_x = block % WTILES;
-    const int block_y = block / WTILES;
+    const int batch = block / P;
+    const int block_x = (block - P * batch) % WTILES;
+    const int block_y = (block - P * batch) / WTILES;
 
     // 6x6 tiles overlap by 2
     const int yin = WINOGRAD_M * block_y - 1;
     const int xin = WINOGRAD_M * block_x - 1;
 
-    if (block < P && ch < C) {
+    if (block < batch_size * P && ch < C) {
         // Cache input tile and handle zero padding
         float x[WINOGRAD_ALPHA][WINOGRAD_ALPHA];
         for (int i = 0; i < WINOGRAD_ALPHA; i++) {
@@ -266,7 +266,7 @@ __kernel void in_transform(__global net_t * restrict in, __global net_t * restri
         // Padded with zeros as necessary for SGEMM
         // = [36, Cpad, Ppad]
 
-        const int offset = ch * Ppad + P * batch + block;
+        const int offset = ch * Ppad + block;
         __in_transform_eq(x, V, offset, CPpad);
     }
 }
@@ -327,6 +327,7 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
                                      __global net_t * restrict Y,
                                      const int K,
                                      const int Kpad, const int Ppad,
+                                     const int batch_size,
                                      __global const net_t * restrict residual,
                                      __constant const net_t * restrict means,
                                      __constant const net_t * restrict stddivs) {
@@ -337,19 +338,19 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
 
     const int k = get_global_id(0);
     const int block = get_global_id(1);
-    const int batch = get_global_id(2);
 
-    const int block_x = block % WTILES;
-    const int block_y = block / WTILES;
+    const int batch = block / P;
+    const int block_x = (block - P * batch) % WTILES;
+    const int block_y = (block - P * batch) / WTILES;
 
     int x = WINOGRAD_M * block_x;
     int y = WINOGRAD_M * block_y;
 
-    if (k < K && block < P) {
+    if (k < K && block < batch_size * P) {
         const int kHW = batch * K * BOARD_SQUARES + k * BOARD_SQUARES;
 
         float o[WINOGRAD_M * WINOGRAD_M];
-        __out_transform_eq(M, o, Kpad, Ppad, block + P*batch);
+        __out_transform_eq(M, o, Kpad, Ppad, block);
 
         const float mean = vload_net_t(k, means);
         const float scale_stddiv = vload_net_t(k, stddivs);
@@ -404,7 +405,7 @@ __kernel void out_transform_fused_bn_in(
         const int kHW = batch * K * BOARD_SQUARES + k * BOARD_SQUARES;
 
         float o[WINOGRAD_M * WINOGRAD_M];
-        __out_transform_eq(M, o, Kpad, Ppad, block + P*batch);
+        __out_transform_eq(M, o, Kpad, Ppad, block + P * batch);
 
         const float mean = vload_net_t(k, means);
         const float scale_stddiv = vload_net_t(k, stddivs);
@@ -722,7 +723,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
         }
     }
 
-    const int output_batch = 0;
+    const int output_batch = 3;
 
     std::memcpy(output_pol.data(), pol2.data() + output_batch * 2 * BOARD_SQUARES, 2 * BOARD_SQUARES * sizeof(net_t));
     std::memcpy(output_val.data(), val2.data() + output_batch * BOARD_SQUARES, BOARD_SQUARES * sizeof(net_t));
@@ -771,7 +772,8 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
     constexpr auto width = BOARD_SIZE;
     constexpr auto height = BOARD_SIZE;
 
-    auto wgs = ceilMultiple(tiles, wavefront_size);
+    auto wgs = ceilMultiple(batch_size * tiles, wavefront_size);
+
     auto m_ceil = int(ceilMultiple(ceilMultiple(outputs, mwg), vwm));
     auto n_ceil = int(ceilMultiple(ceilMultiple(batch_size * tiles, nwg), vwn));
     auto k_ceil = int(ceilMultiple(ceilMultiple(channels, kwg), vwm));
@@ -785,9 +787,10 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
             in_transform_kernel.setArg(2, channels);
             in_transform_kernel.setArg(3, k_ceil);
             in_transform_kernel.setArg(4, n_ceil);
+            in_transform_kernel.setArg(5, batch_size);
 
             queue.enqueueNDRangeKernel(in_transform_kernel, cl::NullRange,
-                                       cl::NDRange(wgs, channels, batch_size));
+                                       cl::NDRange(wgs, channels));
         } catch (const cl::Error &e) {
             std::cerr << "Error in convolve3: " << e.what() << ": "
                 << e.err() << std::endl;
@@ -854,16 +857,17 @@ void OpenCL_Network::convolve3(OpenCLContext & opencl_context,
             out_transform_bn_kernel.setArg(2, outputs);
             out_transform_bn_kernel.setArg(3, m_ceil);
             out_transform_bn_kernel.setArg(4, n_ceil);
+            out_transform_bn_kernel.setArg(5, batch_size);
             if (bufferResidual) {
-                out_transform_bn_kernel.setArg(5, *bufferResidual);
+                out_transform_bn_kernel.setArg(6, *bufferResidual);
             } else {
-                out_transform_bn_kernel.setArg(5, nullptr);
+                out_transform_bn_kernel.setArg(6, nullptr);
             }
-            out_transform_bn_kernel.setArg(6, bn_weights[0]);
-            out_transform_bn_kernel.setArg(7, bn_weights[1]);
+            out_transform_bn_kernel.setArg(7, bn_weights[0]);
+            out_transform_bn_kernel.setArg(8, bn_weights[1]);
 
             queue.enqueueNDRangeKernel(out_transform_bn_kernel, cl::NullRange,
-                                       cl::NDRange(outputs, wgs, batch_size));
+                                       cl::NDRange(outputs, wgs));
         }
     } catch (const cl::Error &e) {
         std::cerr << "Error in convolve3: " << e.what() << ": "
