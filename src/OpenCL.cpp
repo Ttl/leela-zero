@@ -200,21 +200,41 @@ void __in_transform_eq(float x[WINOGRAD_ALPHA][WINOGRAD_ALPHA], __global net_t *
     // Calculates transpose(B).x.B
     for (int i = 0; i < WINOGRAD_ALPHA; i++){
         for (int j = 0; j < WINOGRAD_ALPHA; j++) {
+#ifdef WINOGRAD_SIMD
+            float2 acc = {0.0f, 0.0f};
+            float2 *x1 = (float2 *)&Bt[i * WINOGRAD_ALPHA];
+            float2 *x2 = (float2 *)&x[j][0];
+            for (int k = 0; k < WINOGRAD_ALPHA/2; k++) {
+                acc += x1[k] * x2[k];
+            }
+            T1[i][j] = acc.x + acc.y;
+#else
             float acc = 0.0f;
             for (int k = 0; k < WINOGRAD_ALPHA; k++) {
                 acc += Bt[i * WINOGRAD_ALPHA + k] * x[j][k];
             }
             T1[i][j] = acc;
+#endif
         }
     }
 
     for (int i = 0; i < WINOGRAD_ALPHA; i++){
         for (int j = 0; j < WINOGRAD_ALPHA; j++) {
+#ifdef WINOGRAD_SIMD
+            float2 acc = {0.0f, 0.0f};
+            float2 *x1 = (float2 *)&T1[i][0];
+            float2 *x2 = (float2 *)&Bt[j * WINOGRAD_ALPHA];
+            for (int k = 0; k < WINOGRAD_ALPHA/2; k++) {
+                acc += x1[k] * x2[k];
+            }
+            T2[i][j] = acc.x + acc.y;
+#else
             float acc = 0.0f;
             for (int k = 0; k < WINOGRAD_ALPHA; k++) {
                 acc += T1[i][k] * Bt[j * WINOGRAD_ALPHA + k];
             }
             T2[i][j] = acc;
+#endif
         }
     }
 
@@ -295,7 +315,7 @@ void __out_transform_eq(__global const net_t * restrict M, float o[WINOGRAD_M * 
         }
     }
 
-    float At[WINOGRAD_M * WINOGRAD_ALPHA] = \
+    const float At[WINOGRAD_M * WINOGRAD_ALPHA] = \
                       {1.0f, 1.0f,      1.0f,       1.0f,      1.0f,     0.0f,
                        0.0f, SQ2/2.0f, -SQ2/2.0f,   SQ2,      -SQ2,      0.0f,
                        0.0f, 1.0f/2.0f, 1.0f/2.0f,  2.0f,      2.0f,     0.0f,
@@ -304,21 +324,41 @@ void __out_transform_eq(__global const net_t * restrict M, float o[WINOGRAD_M * 
     // Calculates transpose(A).temp_m.A
     for (int i = 0; i < WINOGRAD_M; i++){
         for (int j = 0; j < WINOGRAD_ALPHA; j++) {
+#ifdef WINOGRAD_SIMD
+            float2 acc = {0.0f, 0.0f};
+            float2 *x1 = (float2 *)&At[i * WINOGRAD_ALPHA];
+            float2 *x2 = (float2 *)&temp_m[j][0];
+            for (int q = 0; q < WINOGRAD_ALPHA/2; q++) {
+                acc += x1[q] * x2[q];
+            }
+            temp[i][j] = acc.x + acc.y;
+#else
             float acc = 0.0f;
             for (int q = 0; q < WINOGRAD_ALPHA; q++) {
                 acc += At[i * WINOGRAD_ALPHA + q] * temp_m[j][q];
             }
             temp[i][j] = acc;
+#endif
         }
     }
 
     for (int i = 0; i < WINOGRAD_M; i++){
         for (int j = 0; j < WINOGRAD_M; j++) {
+#ifdef WINOGRAD_SIMD
+            float2 acc = {0.0f, 0.0f};
+            float2 *x1 = (float2 *)&temp[i][0];
+            float2 *x2 = (float2 *)&At[j * WINOGRAD_ALPHA];
+            for (int q = 0; q < WINOGRAD_ALPHA/2; q++) {
+                acc += x1[q] * x2[q];
+            }
+            o[i * WINOGRAD_M + j] = acc.x + acc.y;
+#else
             float acc = 0.0f;
             for (int q = 0; q < WINOGRAD_ALPHA; q++) {
                 acc += temp[i][q] * At[j * WINOGRAD_ALPHA + q];
             }
             o[i * WINOGRAD_M + j] = acc;
+#endif
         }
     }
 }
@@ -1199,6 +1239,10 @@ void OpenCL::initialize(const int channels, int gpu, bool silent) {
     // Build program for these specific devices
     try {
         std::string args = cl_args;
+        // Intel iGPUs need vector types for math for best performance
+        if (m_device.getInfo<CL_DEVICE_PREFERRED_VECTOR_WIDTH_FLOAT>() > 1) {
+            args += " -DWINOGRAD_SIMD";
+        }
         args += sgemm_tuners;
         m_program.build(args.c_str());
     } catch (const cl::Error&) {
