@@ -45,7 +45,7 @@
 
 
 // Winograd filter transformation changes 3x3 filters to M + 3 - 1
-constexpr auto WINOGRAD_M = 4;
+constexpr auto WINOGRAD_M = 5;
 constexpr auto WINOGRAD_ALPHA = WINOGRAD_M + 3 - 1;
 constexpr auto WINOGRAD_WTILES = BOARD_SIZE / WINOGRAD_M + (BOARD_SIZE % WINOGRAD_M != 0);
 constexpr auto WINOGRAD_TILE = WINOGRAD_ALPHA * WINOGRAD_ALPHA;

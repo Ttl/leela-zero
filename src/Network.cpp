@@ -133,12 +133,13 @@ std::vector<float> Network::winograd_transform_f(const std::vector<float>& f,
     // U matrix is transposed for better memory layout in SGEMM
     auto U = std::vector<float>(WINOGRAD_TILE * outputs * channels);
     const auto G = std::array<float, 3 * WINOGRAD_ALPHA>
-                    { 1.0f,        0.0f,      0.0f,
-                      -2.0f/3.0f, -SQ2/3.0f, -1.0f/3.0f,
-                      -2.0f/3.0f,  SQ2/3.0f, -1.0f/3.0f,
-                      1.0f/6.0f,   SQ2/6.0f,  1.0f/3.0f,
-                      1.0f/6.0f,  -SQ2/6.0f,  1.0f/3.0f,
-                      0.0f,        0.0f,      1.0f};
+    { 2.0f/9.0f,   2.0f/9.0f,   2.0f/9.0f,
+      2.0f/9.0f,  -2.0f/9.0f,   2.0f/9.0f,
+      1.0f/45.0f,  2.0f/45.0f,  4.0f/45.0f,
+     -1.0f/45.0f,  2.0f/45.0f, -4.0f/45.0f,
+      16.0f/45.0f, 8.0f/45.0f,  4.0f/45.0f,
+     -16.0f/45.0f, 8.0f/45.0f, -4.0f/45.0f,
+      0.0f,        0.0f,        1.0f};
 
     auto temp = std::array<float, 3 * WINOGRAD_ALPHA>{};
 

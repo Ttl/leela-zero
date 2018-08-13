@@ -73,12 +73,14 @@ void CPUPipe::winograd_transform_in(const std::vector<float>& in,
                 WinogradTile T1, T2;
 
                 const auto Bt = std::array<float, WINOGRAD_TILE>
-                           {1.0f,  0.0f,     -5.0f/2.0f,  0.0f,      1.0f, 0.0f,
-                            0.0f, -SQ2,      -2.0f,       SQ2/2.0f,  1.0f, 0.0f,
-                            0.0f,  SQ2,      -2.0f,      -SQ2/2.0f,  1.0f, 0.0f,
-                            0.0f, -SQ2/2.0f, -1.0f/2.0f,  SQ2,       1.0f, 0.0f,
-                            0.0f,  SQ2/2.0f, -1.0f/2.0f, -SQ2,       1.0f, 0.0f,
-                            0.0f,  1.0f,      0.0f,      -5.0f/2.0f, 0.0f, 1.0f};
+                   {-1.0f, -1.0f, 17.0f/4.0f, 17.0f/4.0f, -1.0f, -1.0f, 0.0f,
+                    -1.0f,  1.0f, 17.0f/4.0f, -17.0f/4.0f,-1.0f,  1.0f, 0.0f,
+                     0.5f,  0.25f, -5.0f/2.0f, -5.0f/4.0f, 2.0f,  1.0f, 0.0f,
+                    -0.5,   0.25,  5.0f/2.0f,  -5.0f/4.0f,-2.0f,  1.0f, 0.0f,
+                     2.0f,  4.0f, -5.0f/2.0f,  -5.0f,      0.5f,  1.0f, 0.0f,
+                    -2.0f,  4.0f,  5.0f/2.0f,  -5.0f,     -0.5,   1.0f, 0.0f,
+                    -1.0f,  0.0f,  21.0f/4.0f,  0.0f, -21.0f/4.0f, 0.0f,  1.0f};
+
 
                 // Calculates transpose(B).x.B
                 for (auto i = 0; i < WINOGRAD_ALPHA; i++){
@@ -160,10 +162,11 @@ void CPUPipe::winograd_transform_out(const std::vector<float>& M,
                 }
 
                 const auto At = std::array<float, WINOGRAD_ALPHA * WINOGRAD_M>
-                      {1.0f, 1.0f,      1.0f,       1.0f,      1.0f,     0.0f,
-                       0.0f, SQ2/2.0f, -SQ2/2.0f,   SQ2,      -SQ2,      0.0f,
-                       0.0f, 1.0f/2.0f, 1.0f/2.0f,  2.0f,      2.0f,     0.0f,
-                       0.0f, SQ2/4.0f, -SQ2/4.0f,   2.0f*SQ2, -2.0f*SQ2, 1.0f};
+                {1.0f,  1.0f,   1.0f,   1.0f,    1.0f,     1.0f,    0.0f,
+                 1.0f,  -1.0f,  2.0f,   -2.0f,  0.5f,   -0.5f,   0.0f,
+                 1.0f,  1.0f,   4.0f,   4.0f,   0.25f,   0.25f,   0.0f,
+                 1.0f,  -1.0f,  8.0f,   -8.0f,  1.0f/8.0f,   -1.0f/8.0f,  0.0f,
+                 1.0f,  1.0f,   16.0f,  16.0f,  1.0f/16.0f,  1.0f/16.0f,  1.0f};
 
                 std::array<std::array<float, WINOGRAD_ALPHA>, WINOGRAD_M> temp;
                 std::array<std::array<float, WINOGRAD_M>, WINOGRAD_M> o;
