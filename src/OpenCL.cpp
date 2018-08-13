@@ -125,7 +125,7 @@ void OpenCL_Network<net_t>::add_weights(size_t layer,
 }
 
 template <typename net_t>
-void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
+void OpenCL_Network<net_t>::forward_internal(const std::vector<float>& input,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,
@@ -138,6 +138,10 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
     const auto finalSize_val = m_layers.back().outputs * one_plane;
 
     m_opencl.ensure_context_initialized(opencl_context);
+
+    if (batch_size > MAX_BATCH) {
+        throw std::runtime_error("Maximum batch size exceeded.");
+    }
 
     if (!opencl_context.m_buffers_allocated) {
         auto max_channels = unsigned{0};
@@ -155,7 +159,7 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
         const auto n_ceil = ceilMultiple(ceilMultiple(tiles, nwg), vwn);
 
         const auto alloc_inSize =
-            MAX_BATCH * m_ceil * m_ceil * max_channels * sizeof(net_t);
+            MAX_BATCH * BOARD_SQUARES * max_channels * sizeof(net_t);
         const auto alloc_vm_size =
             MAX_BATCH * WINOGRAD_TILE * m_ceil * n_ceil * sizeof(net_t);
 
@@ -195,7 +199,13 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
     std::copy(begin(input), end(input), begin(net_t_input));
 
     const auto inSize = sizeof(net_t) * input.size();
-    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, net_t_input.data());
+    try {
+        queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, net_t_input.data());
+    } catch (const cl::Error &e) {
+        std::cerr << "Error in enqueueWriteBuffer: " << e.what() << ": "
+            << e.err() << std::endl;
+        throw;
+    }
 
     auto skip_in_trans = false;
     for (auto iter = cbegin(m_layers); iter != cend(m_layers); iter++) {
@@ -282,30 +292,76 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
         }
     }
 
-    auto pinnedOutBufferHost_pol = queue.enqueueMapBuffer(
-        opencl_context.m_pinnedOutBuffer_pol, CL_FALSE,
-        CL_MAP_READ, 0, batch_size * finalSize_pol);
-    auto pinnedOutBufferHost_val = queue.enqueueMapBuffer(
-        opencl_context.m_pinnedOutBuffer_val, CL_FALSE,
-        CL_MAP_READ, 0, batch_size * finalSize_val);
+    try {
+        auto pinnedOutBufferHost_pol = queue.enqueueMapBuffer(
+            opencl_context.m_pinnedOutBuffer_pol, CL_FALSE,
+            CL_MAP_READ, 0, batch_size * finalSize_pol);
+        auto pinnedOutBufferHost_val = queue.enqueueMapBuffer(
+            opencl_context.m_pinnedOutBuffer_val, CL_FALSE,
+            CL_MAP_READ, 0, batch_size * finalSize_val);
 
-    {
-        // Finish call is usually a busy wait. When using multiple threads
-        // use the lock to avoid busy waiting with all threads.
-        std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
-        queue.finish();
+        {
+            // Finish call is usually a busy wait. When using multiple threads
+            // use the lock to avoid busy waiting with all threads.
+            std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
+            queue.finish();
+        }
+
+        auto polptr = static_cast<net_t*>(pinnedOutBufferHost_pol);
+        auto valptr = static_cast<net_t*>(pinnedOutBufferHost_val);
+        std::copy(polptr, polptr + output_pol.size(), begin(output_pol));
+        std::copy(valptr, valptr + output_val.size(), begin(output_val));
+
+        queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_pol,
+                pinnedOutBufferHost_pol);
+        queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_val,
+                pinnedOutBufferHost_val);
+
+    } catch (const cl::Error &e) {
+        std::cerr << "Error in enqueueMapBuffer: " << e.what() << ": "
+            << e.err() << std::endl;
+        throw;
     }
 
-    auto polptr = static_cast<net_t*>(pinnedOutBufferHost_pol);
-    auto valptr = static_cast<net_t*>(pinnedOutBufferHost_val);
-    std::copy(polptr, polptr + output_pol.size(), begin(output_pol));
-    std::copy(valptr, valptr + output_val.size(), begin(output_val));
+}
 
-    queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_pol,
-            pinnedOutBufferHost_pol);
-    queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_val,
-            pinnedOutBufferHost_val);
+template <typename net_t>
+void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
+                             std::vector<float>& output_pol,
+                             std::vector<float>& output_val,
+                             OpenCLContext & opencl_context,
+                             const int batch_size) {
 
+    constexpr auto batch = 32;
+    std::vector<float> input2;
+
+    for (auto j=0; j < batch;j++) {
+        for(auto i=0; i < input.size(); i++) {
+            input2.emplace_back(input[i]);
+        }
+    }
+
+    std::vector<float> pol2(batch * 2 * (BOARD_SQUARES));
+    std::vector<float> val2(batch * (BOARD_SQUARES));
+
+    forward_internal(input2, pol2, val2, opencl_context, batch);
+
+    for (auto i = 0; i < BOARD_SQUARES; i++) {
+        for (auto j=0; j < batch; j++) {
+            assert(val2[i] == val2[i + BOARD_SQUARES * j]);
+        }
+    }
+
+    for (auto i = 0; i < 2 * BOARD_SQUARES; i++) {
+        for (auto j=0; j < batch; j++) {
+            assert(pol2[i] == pol2[i + 2 * BOARD_SQUARES * j]);
+        }
+    }
+
+    const int output_batch = 3;
+
+    std::memcpy(output_pol.data(), pol2.data() + output_batch * 2 * BOARD_SQUARES, 2 * BOARD_SQUARES * sizeof(float));
+    std::memcpy(output_val.data(), val2.data() + output_batch * BOARD_SQUARES, BOARD_SQUARES * sizeof(float));
 }
 
 template <typename net_t>
@@ -779,7 +835,7 @@ void OpenCL<net_t>::initialize(const int channels, int gpu, bool silent) {
 
     auto t = Tuner<net_t>(*this, m_context, m_device);
     auto sgemm_tuners =
-        t.load_sgemm_tuners(channels, WINOGRAD_P, channels, WINOGRAD_TILE);
+        t.load_sgemm_tuners(channels, 32 * WINOGRAD_P, channels, WINOGRAD_TILE);
 
     // Exit immediately after tuning. Some NVIDIA drivers are buggy
     // and will fail to compile the rest of the kernels after a tuning
@@ -792,8 +848,9 @@ void OpenCL<net_t>::initialize(const int channels, int gpu, bool silent) {
     try {
         std::string args = m_cl_args;
         // Intel iGPUs need vector types for math for best performance
-        if (m_device.getInfo<CL_DEVICE_PREFERRED_VECTOR_WIDTH_FLOAT>() > 1) {
-            args += " -DWINOGRAD_SIMD";
+        if (m_device.getInfo<CL_DEVICE_PREFERRED_VECTOR_WIDTH_FLOAT>() > 1
+            && WINOGRAD_M % 2 == 0) {
+                args += " -DWINOGRAD_SIMD";
         }
 
         args += sgemm_tuners;

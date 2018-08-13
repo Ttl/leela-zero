@@ -140,6 +140,13 @@ public:
             OpenCLContext & opencl_context,
             const int batch_size = 1);
 
+    void forward_internal(const std::vector<float>& input,
+            std::vector<float>& output_pol,
+            std::vector<float>& output_val,
+            OpenCLContext & opencl_context,
+            const int batch_size = 1);
+
+
 private:
     using weight_slice_t = std::vector<cl::Buffer>::const_iterator;
 
