@@ -53,6 +53,8 @@ using namespace Utils;
 
 thread_local ThreadData opencl_thread_data;
 
+constexpr auto batch_size = 32;
+
 void CuDNN::initialize(const int channels, const std::vector<int> & gpus,
                        bool silent) {
 
@@ -243,7 +245,7 @@ size_t CuDNN::convolve_init(int channels, int outputs, int kernel_size,
 	checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.input_descriptor,
                                       /*format=*/CUDNN_TENSOR_NCHW,
                                       /*dataType=*/CUDNN_DATA_FLOAT,
-                                      /*batch_size=*/1,
+                                      /*batch_size=*/batch_size,
                                       /*channels=*/channels,
                                       /*image_height=*/19,
                                       /*image_width=*/19));
@@ -252,7 +254,7 @@ size_t CuDNN::convolve_init(int channels, int outputs, int kernel_size,
 	checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.output_descriptor,
                                       /*format=*/CUDNN_TENSOR_NCHW,
                                       /*dataType=*/CUDNN_DATA_FLOAT,
-                                      /*batch_size=*/1,
+                                      /*batch_size=*/batch_size,
                                       /*channels=*/outputs,
                                       /*image_height=*/19,
                                       /*image_width=*/19));
@@ -261,7 +263,7 @@ size_t CuDNN::convolve_init(int channels, int outputs, int kernel_size,
 	checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.bias_descriptor,
                                       /*format=*/CUDNN_TENSOR_NCHW,
                                       /*dataType=*/CUDNN_DATA_FLOAT,
-                                      /*batch_size=*/1,
+                                      /*batch_size=*/batch_size,
                                       /*channels=*/outputs,
                                       /*image_height=*/1,
                                       /*image_width=*/1));
@@ -379,7 +381,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
 			max_channels = std::max(max_channels,
 								std::max(layer.channels, layer.outputs));
         }
-		auto alloc_insize = max_channels * one_plane;
+		auto alloc_insize = max_channels * one_plane * batch_size;
 
 		net_t *d_workspace;
 		auto err = cudaMalloc((void**)&d_workspace, max_wsize);
