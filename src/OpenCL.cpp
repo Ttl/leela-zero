@@ -81,6 +81,8 @@ const std::string sourceCode_sgemm =
     #include "kernels/clblast/xgemm_batched.opencl"
 ;
 
+constexpr auto batch = 16;
+
 template <typename net_t>
 void OpenCL<net_t>::ensure_context_initialized(OpenCLContext &opencl_context) {
     if (!opencl_context.m_is_initialized) {
@@ -125,7 +127,7 @@ void OpenCL_Network<net_t>::add_weights(size_t layer,
 }
 
 template <typename net_t>
-void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
+void OpenCL_Network<net_t>::forward_internal(const std::vector<float>& input,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,
@@ -136,6 +138,10 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
     const auto finalSize_val = m_layers.back().outputs * one_plane;
 
     m_opencl.ensure_context_initialized(opencl_context);
+
+    if (batch_size > MAX_BATCH) {
+        throw std::runtime_error("Maximum batch size exceeded.");
+    }
 
     if (!opencl_context.m_buffers_allocated) {
         auto max_channels = unsigned{0};
@@ -193,7 +199,14 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
     std::copy(begin(input), end(input), begin(net_t_input));
 
     const auto inSize = sizeof(net_t) * input.size();
-    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, net_t_input.data());
+
+    try {
+        queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, net_t_input.data());
+    } catch (const cl::Error &e) {
+        std::cerr << "Error in enqueueWriteBuffer: " << e.what() << ": "
+            << e.err() << std::endl;
+        throw;
+    }
 
     auto skip_in_trans = false;
     for (auto iter = cbegin(m_layers); iter != cend(m_layers); iter++) {
@@ -304,6 +317,44 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
     queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_val,
             pinnedOutBufferHost_val);
 
+}
+
+template <typename net_t>
+void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
+                             std::vector<float>& output_pol,
+                             std::vector<float>& output_val,
+                             OpenCLContext & opencl_context,
+                             const int batch_size) {
+
+    std::vector<float> input2;
+
+    for (auto j=0; j < batch;j++) {
+        for(auto i=0; i < input.size(); i++) {
+            input2.emplace_back(input[i]);
+        }
+    }
+
+    std::vector<float> pol2(batch * 2 * (BOARD_SQUARES));
+    std::vector<float> val2(batch * (BOARD_SQUARES));
+
+    forward_internal(input2, pol2, val2, opencl_context, batch);
+
+    for (auto i = 0; i < BOARD_SQUARES; i++) {
+        for (auto j=0; j < batch; j++) {
+            assert(val2[i] == val2[i + BOARD_SQUARES * j]);
+        }
+    }
+
+    for (auto i = 0; i < 2 * BOARD_SQUARES; i++) {
+        for (auto j=0; j < batch; j++) {
+            assert(pol2[i] == pol2[i + 2 * BOARD_SQUARES * j]);
+        }
+    }
+
+    const int output_batch = 0;
+
+    std::memcpy(output_pol.data(), pol2.data() + output_batch * 2 * BOARD_SQUARES, 2 * BOARD_SQUARES * sizeof(float));
+    std::memcpy(output_val.data(), val2.data() + output_batch * BOARD_SQUARES, BOARD_SQUARES * sizeof(float));
 }
 
 template <typename net_t>
@@ -777,7 +828,7 @@ void OpenCL<net_t>::initialize(const int channels, int gpu, bool silent) {
 
     auto t = Tuner<net_t>(*this, m_context, m_device);
     auto sgemm_tuners =
-        t.load_sgemm_tuners(channels, WINOGRAD_P, channels, WINOGRAD_TILE);
+        t.load_sgemm_tuners(channels, batch * WINOGRAD_P, channels, WINOGRAD_TILE);
 
     // Exit immediately after tuning. Some NVIDIA drivers are buggy
     // and will fail to compile the rest of the kernels after a tuning
