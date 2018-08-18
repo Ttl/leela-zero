@@ -54,6 +54,7 @@ public:
                                unsigned int outputs,
                                const std::vector<float>& weights) = 0;
 
+    virtual void set_scales(const std::vector<float>& /* activations */, const float /* activation_scale */) {};
 
 };
 

@@ -21,14 +21,17 @@ clang:
 		LDFLAGS='$(LDFLAGS) -flto -fuse-linker-plugin' \
 		leelaz
 
-DYNAMIC_LIBS = -lboost_program_options -lpthread -lz
+DYNAMIC_LIBS = -lboost_program_options -lpthread -lz -lcuda -lcudart -lcudnn
 LIBS =
 
 ifeq ($(THE_OS),Linux)
 # for Linux with OpenBLAS
-	CXXFLAGS += -I/usr/include/openblas
 	DYNAMIC_LIBS += -lopenblas
 	DYNAMIC_LIBS += -lOpenCL
+	CUDNN = /usr/local/cuda/include
+	CUDART = /usr/local/cuda/lib64
+	CXXFLAGS += -I/usr/include/openblas -I$(CUDNN)
+	DYNAMIC_LIBS += -L$(CUDART)
 endif
 ifeq ($(THE_OS),Darwin)
 # for macOS (comment out the Linux part)
@@ -50,15 +53,24 @@ sources = Network.cpp FullBoard.cpp KoState.cpp Training.cpp \
 	  SGFParser.cpp Timing.cpp Utils.cpp FastBoard.cpp \
 	  SGFTree.cpp Zobrist.cpp FastState.cpp GTP.cpp Random.cpp \
 	  SMP.cpp UCTNode.cpp UCTNodePointer.cpp UCTNodeRoot.cpp \
-	  OpenCL.cpp OpenCLScheduler.cpp NNCache.cpp Tuner.cpp CPUPipe.cpp
+	  OpenCL.cpp OpenCLScheduler.cpp NNCache.cpp Tuner.cpp CPUPipe.cpp \
+	  CuDNN.cpp CuDNNScheduler.cpp CuDNN_Int8_calibrate.cpp
+
+nv_sources = kernels/convolve.cu
 
 objects = $(sources:.cpp=.o)
+objects += $(nv_sources:.cu=.o)
+
 deps = $(sources:%.cpp=%.d)
+deps += $(nv_sources:%.cu=%.d)
 
 -include $(deps)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c -o $@ $<
+
+%.o: %.cu
+	nvcc -std=c++11 -c -o $@ $<
 
 leelaz: $(objects)
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS) $(DYNAMIC_LIBS)

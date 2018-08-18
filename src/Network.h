@@ -34,11 +34,14 @@
 #ifdef USE_OPENCL
 #include "OpenCLScheduler.h"
 #endif
+
+#ifdef USE_CUDNN
+#include "CuDNNScheduler.h"
+#endif
+
 #include "GameState.h"
 #include "ForwardPipe.h"
-#ifdef USE_OPENCL
-#include "OpenCLScheduler.h"
-#endif
+
 #ifdef USE_OPENCL_SELFCHECK
 #include "SMP.h"
 #endif
@@ -85,15 +88,12 @@ public:
     static std::pair<int, int> get_symmetry(const std::pair<int, int>& vertex,
                                             const int symmetry,
                                             const int board_size = BOARD_SIZE);
+
+    static std::vector<float> winograd_transform_f(const std::vector<float>& f,
+                                            const int outputs, const int channels);
 private:
     std::pair<int, int> load_v1_network(std::istream& wtfile);
     std::pair<int, int> load_network_file(const std::string& filename);
-
-    static std::vector<float> winograd_transform_f(const std::vector<float>& f,
-                                                   const int outputs, const int channels);
-    static std::vector<float> zeropad_U(const std::vector<float>& U,
-                                        const int outputs, const int channels,
-                                        const int outputs_pad, const int channels_pad);
     static void winograd_transform_in(const std::vector<float>& in,
                                       std::vector<float>& V,
                                       const int C);

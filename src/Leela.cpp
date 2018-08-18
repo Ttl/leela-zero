@@ -82,6 +82,9 @@ static void parse_commandline(int argc, char *argv[]) {
         ("benchmark", "Test network and exit. Default args:\n-v3200 --noponder "
                       "-m0 -t1 -s1.")
         ("cpu-only", "Use CPU-only implementation and do not use GPU.")
+#ifdef USE_CUDNN
+        ("cudnn", "Use cudnn to evaluate neural net. Only works on recent nVidia GPUs.")
+#endif
         ;
 #ifdef USE_OPENCL
     po::options_description gpu_desc("GPU options");
@@ -91,8 +94,8 @@ static void parse_commandline(int argc, char *argv[]) {
         ("full-tuner", "Try harder to find an optimal OpenCL tuning.")
         ("tune-only", "Tune OpenCL only and then exit.")
 #ifdef USE_HALF
-        ("precision", po::value<std::string>(), "Floating-point precision (single/half/auto).\n"
-                                                "Default is to auto which automatically determines which one to use.")
+        ("precision", po::value<std::string>(), "Floating-point precision (single/half/int8/auto).\n"
+                                                "Default is to auto which automatically determines which one to use. int8 is only support by the cudnn backend.")
 #endif
         ;
 #endif
@@ -229,10 +232,12 @@ static void parse_commandline(int argc, char *argv[]) {
             cfg_precision = precision_t::SINGLE;
         } else if ("half" == precision) {
             cfg_precision = precision_t::HALF;
+        } else if ("int8" == precision) {
+            cfg_precision = precision_t::INT8;
         } else if ("auto" == precision) {
             cfg_precision = precision_t::AUTO;
         } else {
-            printf("Unexpected option for --precision, expecting single/half/auto\n");
+            printf("Unexpected option for --precision, expecting single/half/int8/auto\n");
             exit(EXIT_FAILURE);
         }
     }
@@ -273,6 +278,12 @@ static void parse_commandline(int argc, char *argv[]) {
     if (vm.count("cpu-only")) {
         cfg_cpu_only = true;
     }
+
+#ifdef USE_CUDNN
+    if (vm.count("cudnn")) {
+        cfg_cudnn = true;
+    }
+#endif
 
     if (vm.count("playouts")) {
         cfg_max_playouts = vm["playouts"].as<int>();

@@ -50,7 +50,7 @@ extern bool cfg_sgemm_exhaustive;
 extern bool cfg_tune_only;
 #ifdef USE_HALF
 enum class precision_t {
-    AUTO, SINGLE, HALF
+    AUTO, SINGLE, HALF, INT8
 };
 extern precision_t cfg_precision;
 #endif
@@ -65,6 +65,9 @@ extern bool cfg_quiet;
 extern std::string cfg_options_str;
 extern bool cfg_benchmark;
 extern bool cfg_cpu_only;
+#ifdef USE_CUDNN
+extern bool cfg_cudnn;
+#endif
 extern int cfg_analyze_interval_centis;
 
 /*

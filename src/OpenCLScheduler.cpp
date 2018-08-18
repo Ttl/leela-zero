@@ -122,7 +122,11 @@ void OpenCLScheduler<net_t>::push_input_convolution(unsigned int filter_size,
         const auto m_ceil = ceilMultiple(ceilMultiple(outputs, mwg), vwm);
         const auto k_ceil = ceilMultiple(ceilMultiple(channels, kwg), vwm);
 
-        const auto Upad = zeropad_U<net_t>(weights,
+		auto weights_w = Network::winograd_transform_f(weights,
+													  outputs,
+													  channels);
+
+        const auto Upad = zeropad_U<net_t>(weights_w,
                                            outputs, channels,
                                            m_ceil, k_ceil);
         opencl_net->push_input_convolution(
@@ -149,10 +153,19 @@ void OpenCLScheduler<net_t>::push_residual(unsigned int filter_size,
         const auto vwm = tuners[3];
 
         const auto m_ceil = ceilMultiple(ceilMultiple(outputs, mwg), vwm);
-        const auto Upad1 = zeropad_U<net_t>(weights_1,
+
+		auto weights_1_w = Network::winograd_transform_f(weights_1,
+														 outputs,
+														 channels);
+
+		auto weights_2_w = Network::winograd_transform_f(weights_2,
+														 outputs,
+														 channels);
+
+        const auto Upad1 = zeropad_U<net_t>(weights_1_w,
                                             outputs, outputs,
                                             m_ceil, m_ceil);
-        const auto Upad2 = zeropad_U<net_t>(weights_2,
+        const auto Upad2 = zeropad_U<net_t>(weights_2_w,
                                             outputs, outputs,
                                             m_ceil, m_ceil);
         opencl_net->push_residual(filter_size, channels, outputs,

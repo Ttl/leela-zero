@@ -72,6 +72,8 @@ static constexpr auto BOARD_SQUARES = BOARD_SIZE * BOARD_SIZE;
 #ifndef USE_CPU_ONLY
 #define USE_OPENCL
 
+#define USE_CUDNN
+
 /*
  * USE_HALF: Include the half-precision OpenCL implementation when building.
  * The current implementation autodetects whether half-precision is better
@@ -115,7 +117,7 @@ static constexpr auto MAX_CPUS = 128;
 #if defined(USE_BLAS) && defined(USE_OPENCL)
 // If both BLAS and OpenCL are fully usable, then check the OpenCL
 // results against BLAS with some probability.
-#define USE_OPENCL_SELFCHECK
+//#define USE_OPENCL_SELFCHECK
 static constexpr auto SELFCHECK_PROBABILITY = 2000;
 #endif
 

@@ -338,30 +338,42 @@ void CPUPipe::forward(const std::vector<float>& input,
 
 
 void CPUPipe::push_input_convolution(unsigned int /*filter_size*/,
-                                     unsigned int /*channels*/,
-                                     unsigned int /*outputs*/,
+                                     unsigned int channels,
+                                     unsigned int outputs,
                                      const std::vector<float>& weights,
                                      const std::vector<float>& means,
                                      const std::vector<float>& variances) {
-    m_conv_weights.push_back(weights);
+
+	auto weights_w = Network::winograd_transform_f(weights,
+												   outputs,
+												   channels);
+    m_conv_weights.push_back(weights_w);
     m_batchnorm_means.push_back(means);
     m_batchnorm_stddivs.push_back(variances);
 }
 
 void CPUPipe::push_residual(unsigned int /*filter_size*/,
-                            unsigned int /*channels*/,
-                            unsigned int /*outputs*/,
+                            unsigned int channels,
+                            unsigned int outputs,
                             const std::vector<float>& weights_1,
                             const std::vector<float>& means_1,
                             const std::vector<float>& variances_1,
                             const std::vector<float>& weights_2,
                             const std::vector<float>& means_2,
                             const std::vector<float>& variances_2) {
-    m_conv_weights.push_back(weights_1);
+
+	auto weights_1_w = Network::winograd_transform_f(weights_1,
+													 outputs,
+													 channels);
+
+	auto weights_2_w = Network::winograd_transform_f(weights_2,
+													 outputs,
+													 channels);
+    m_conv_weights.push_back(weights_1_w);
     m_batchnorm_means.push_back(means_1);
     m_batchnorm_stddivs.push_back(variances_1);
 
-    m_conv_weights.push_back(weights_2);
+    m_conv_weights.push_back(weights_2_w);
     m_batchnorm_means.push_back(means_2);
     m_batchnorm_stddivs.push_back(variances_2);
 }

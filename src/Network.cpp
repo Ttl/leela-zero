@@ -48,6 +48,12 @@
 #include "OpenCLScheduler.h"
 #include "UCTNode.h"
 #endif
+
+#ifdef USE_CUDNN
+#include "CuDNN_Int8_calibrate.h"
+#include "CuDNNScheduler.h"
+#endif
+
 #include "FastBoard.h"
 #include "FastState.h"
 #include "FullBoard.h"
@@ -126,8 +132,8 @@ void process_bn_var(container& weights) {
 }
 
 std::vector<float> Network::winograd_transform_f(const std::vector<float>& f,
-                                                 const int outputs,
-                                                 const int channels) {
+                                        const int outputs,
+                                        const int channels) {
     // F(4x4, 3x3) Winograd filter transformation
     // transpose(G.dot(f).dot(G.transpose()))
     // U matrix is transposed for better memory layout in SGEMM
@@ -351,22 +357,6 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
         exit(EXIT_FAILURE);
     }
 
-    auto weight_index = size_t{0};
-    // Input convolution
-    // Winograd transform convolution weights
-    m_conv_weights[weight_index] =
-        winograd_transform_f(m_conv_weights[weight_index],
-                             channels, INPUT_CHANNELS);
-    weight_index++;
-
-    // Residual block convolutions
-    for (auto i = size_t{0}; i < residual_blocks * 2; i++) {
-        m_conv_weights[weight_index] =
-            winograd_transform_f(m_conv_weights[weight_index],
-                                 channels, channels);
-        weight_index++;
-    }
-
     // Biases are not calculated and are typically zero but some networks might
     // still have non-zero biases.
     // Move biases to batchnorm means to make the output match without having
@@ -392,15 +382,14 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
         p->initialize(channels);
         auto weight_index = size_t{0};
 
-        // Winograd filter transformation changes filter size to 4x4
-        p->push_input_convolution(WINOGRAD_ALPHA, INPUT_CHANNELS,
+        p->push_input_convolution(3, INPUT_CHANNELS,
             channels, m_conv_weights[weight_index],
             m_batchnorm_means[weight_index], m_batchnorm_stddevs[weight_index]);
         weight_index++;
 
         // residual blocks
         for (auto i = size_t{0}; i < residual_blocks; i++) {
-            p->push_residual(WINOGRAD_ALPHA, channels, channels,
+            p->push_residual(3, channels, channels,
                              m_conv_weights[weight_index],
                              m_batchnorm_means[weight_index],
                              m_batchnorm_stddevs[weight_index],
@@ -425,6 +414,36 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
         m_forward = init_net(std::make_unique<CPUPipe>());
 
         use_selfcheck = false;
+#ifdef USE_CUDNN
+    } else if (cfg_cudnn) {
+#ifdef USE_HALF
+        switch (cfg_precision) {
+            case precision_t::INT8:
+                {
+                    myprintf("Generating int8 calibration\n");
+                    //myprintf("Initializing CuDNN (single precision).\n");
+                    //auto cudnn_fp32 = init_net(std::make_unique<CuDNNScheduler<float>>());
+                    //auto activations = get_activations(*cudnn_fp32);
+                    std::vector<float> activations = {1.48, 1.45, 2.18, 2.03, 1.54, 2.12, 3.10, 1.48, 2.41, 3.80, 1.42, 2.34, 5.07, 1.38, 2.31, 5.88, 1.54, 2.53, 5.50, 2.15, 2.90, 6.07, 2.38, 3.44, 6.68, 3.01, 4.14, 10.15, 3.26, 4.66, 14.18, 3.39, 5.08, 17.20, 4.02, 5.77, 22.38, 4.27, 6.51, 18.59, 4.52, 7.15, 24.03, 5.15, 6.96, 29.99, 4.77, 6.17, 33.88, 5.27, 6.60, 39.46, 5.52, 6.63, 44.35, 5.77, 6.72, 48.81, 5.65, 5.59, 53.75};
+                    myprintf("Initializing CuDNN (int8 precision).\n");
+                    m_forward = init_net(std::make_unique<CuDNNScheduler<int8_t>>());
+                    m_forward->set_scales(activations, 127.0f);
+                }
+                break;
+            case precision_t::SINGLE:
+                myprintf("Initializing CuDNN (single precision).\n");
+                m_forward = init_net(std::make_unique<CuDNNScheduler<float>>());
+                break;
+            default:
+                myprintf("Initializing CuDNN (half precision).\n");
+                m_forward = init_net(std::make_unique<CuDNNScheduler<half_float::half>>());
+                break;
+            }
+#else
+        myprintf("Initializing CuDNN (single precision).\n");
+        m_forward = init_net(std::make_unique<CuDNNScheduler<float>>());
+#endif
+#endif
     } else {
 #ifdef USE_HALF
         switch (cfg_precision) {
@@ -472,6 +491,10 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
             case precision_t::HALF: {
                 myprintf("Initializing OpenCL (half precision).\n");
                 m_forward = init_net(std::make_unique<OpenCLScheduler<half_float::half>>());
+            }
+            break;
+            case precision_t::INT8: {
+                throw std::runtime_error("Int8 precision not supported by the OpenCL backend.");
             }
         }
 #else
