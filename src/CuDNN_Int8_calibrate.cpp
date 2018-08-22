@@ -30,6 +30,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <zlib.h>
 
 #include "CuDNN.h"
 #include "Network.h"
@@ -150,7 +151,9 @@ static float entropy_calibration(std::vector<int> &hist, int hist_max) {
 	auto min_i = -1;
 	auto min_kl = 1e9;
 
-	for (auto i = ref_size; i < hist.size(); i++) {
+	/* Zero bin messes eveything up */
+	hist[0] = hist[1];
+	for (auto i = ref_size; i < hist.size(); i+=1) {
 		std::vector<float> reference(i);
 		std::vector<float> candidate(i);
 
@@ -189,6 +192,28 @@ static float entropy_calibration(std::vector<int> &hist, int hist_max) {
 	return (min_i + 0.5f) * float(hist_max) / float(hist.size());
 }
 
+static int hex_to_int(const unsigned char c) {
+	switch (c) {
+		case '0': return 0;
+		case '1': return 1;
+		case '2': return 2;
+		case '3': return 3;
+		case '4': return 4;
+		case '5': return 5;
+		case '6': return 6;
+		case '7': return 7;
+		case '8': return 8;
+		case '9': return 9;
+		case 'a': return 10;
+		case 'b': return 11;
+		case 'c': return 12;
+		case 'd': return 13;
+		case 'e': return 14;
+		case 'f': return 15;
+		default: throw std::runtime_error("Invalid hex digit");
+	}
+}
+
 std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
     GameState state;
     state.init_game(BOARD_SIZE, 7.5);
@@ -204,14 +229,98 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 	std::string to_move = "b";
 	std::string not_to_move = "w";
 
-	auto constexpr bins = 1024;
+	auto constexpr bins = 2048;
 
 	std::vector<std::vector<int>> histogram;
 	std::vector<float> hist_max;
 
-	for (auto && move : moves) {
+	std::string cal_filename = "int8_cal.gz";
+	auto gzhandle = gzopen(cal_filename.c_str(), "rb");
+    if (gzhandle == nullptr) {
+        myprintf("Could not open calibration file: %s\n", cal_filename.c_str());
+        return {0, 0};
+    }
 
-		const auto input_data = Network::gather_features(&state, Network::Ensemble::RANDOM_SYMMETRY);
+	// Stream the gz file in to a memory buffer stream.
+    auto buffer = std::stringstream{};
+    constexpr auto chunkBufferSize = 64 * 1024;
+    std::vector<char> chunkBuffer(chunkBufferSize);
+    while (true) {
+        auto bytesRead = gzread(gzhandle, chunkBuffer.data(), chunkBufferSize);
+        if (bytesRead == 0) break;
+        if (bytesRead < 0) {
+            myprintf("Failed to decompress or read: %s\n", cal_filename.c_str());
+            gzclose(gzhandle);
+            return {0, 0};
+        }
+        assert(bytesRead <= chunkBufferSize);
+        buffer.write(chunkBuffer.data(), bytesRead);
+    }
+    gzclose(gzhandle);
+
+    auto line = std::string{};
+
+	std::vector<std::vector<float>> planes;
+
+	auto n = 0;
+	std::vector<float> plane(BOARD_SQUARES * 18);
+
+	auto p = 0;
+
+	/* Examples to skip */
+	auto skip = 5;
+
+	auto skip_n = 0;
+
+    while (std::getline(buffer, line)) {
+		if ( n % 19 > 16) {
+			/* Skip policy vector and winner */
+			n++;
+			p = 0;
+			continue;
+		}
+		for (auto i = 0; i < line.size(); i++) {
+			auto h = hex_to_int(line[i]);
+			/* History planes */
+			if ( n % 19 < 16 ) {
+				if (i == BOARD_SQUARES/4 - 1) {
+					plane[p++] = bool(h & (1 << 0));
+				} else {
+					plane[p++] = bool(h & (1 << 3));
+					plane[p++] = bool(h & (1 << 2));
+					plane[p++] = bool(h & (1 << 1));
+					plane[p++] = bool(h & (1 << 0));
+				}
+				/* Last digit has only one bit */
+			} else if ( n % 19 == 16 ) {
+				/* To move planes */
+				for (auto j = 0; j < BOARD_SQUARES; j++) {
+					plane[p++] = !bool(h);
+				}
+				for (auto j = 0; j < BOARD_SQUARES; j++) {
+					plane[p++] = bool(h);
+				}
+				if (skip_n == skip) {
+					planes.emplace_back(plane);
+					skip_n = 0;
+				} else {
+					skip_n++;
+				}
+				break;
+			}
+		}
+
+		n++;
+		//if (n > 19 * skip * 2000) {
+		//	break;
+		//}
+	}
+
+	myprintf("%d calibration examples\n", planes.size());
+
+	for (auto && input_data: planes) {
+
+		//const auto input_data = Network::gather_features(&state, Network::Ensemble::RANDOM_SYMMETRY);
 
 		//state.board.display_board();
 		Activations<float> activations;
@@ -229,8 +338,8 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 		}
 
 		//myprintf("%s: %s\n", to_move.c_str(), move.c_str());
-		myprintf("%.2f %.2f\n", activations[activations.size() - 2], activations[activations.size() - 1]);
-		state.play_textmove(to_move, move);
+
+		//state.play_textmove(to_move, move);
 		std::swap(to_move, not_to_move);
 		float max_all = 0.0f;
 		float max = 0.0f;
@@ -252,9 +361,16 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 		}
 	}
 
-	//for (auto i = 0; i < bins; i++) {
-	//	myprintf("%d ", histogram[0][i]);
-	//}
+	myprintf("max %f\n", hist_max[0]);
+	for (auto i = 0; i < bins; i++) {
+		myprintf("%d ", histogram[0][i]);
+	}
+	myprintf("\n");
+
+	myprintf("max %f\n", hist_max[hist_max.size()-1]);
+	for (auto i = 0; i < bins; i++) {
+		myprintf("%d ", histogram[hist_max.size()-1][i]);
+	}
 	myprintf("\n");
 
 	myprintf("Ths: \n");

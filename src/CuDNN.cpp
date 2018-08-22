@@ -571,7 +571,7 @@ void CuDNN_Network<net_t>::activation_statistics(const void *InBuffer, const voi
         activations_out.emplace_back(out);
     }
     dev = std::sqrt(dev / (N - 1));
-    myprintf("max %.2f, dev %.2f\n", float(max), float(dev));
+    //myprintf("max %.2f, dev %.2f\n", float(max), float(dev));
     activations.emplace_back(activations_out);
 }
 
@@ -610,8 +610,7 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
 
             float g2 = activation_scale/(total_gain * (activations[i]));
             total_gain *= g2;
-            auto conv2_bias_scale = total_gain;
-
+            scale_float_tensor((float *)conv2_biases[0], total_gain, layer.outputs);
             myprintf("Res2: g %.2f\n", total_gain);
             layer.scale_2 *= g2;
             i++;
@@ -626,10 +625,10 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
 
             myprintf("Res2 add: g %.2f\n", total_gain);
             myprintf("gs %.2f %.2f %.2f\n", g1, g2, g3);
+            scale_float_tensor((float *)conv2_biases[0], g3, layer.outputs);
             layer.scale_2 *= g3;
             layer.scale_3 *= g3;
 
-            scale_float_tensor((float *)conv2_biases[0], conv2_bias_scale * g3, layer.outputs);
         } else {
             /* Undo scaling at the end */
             myprintf("End: g %.2f\n", total_gain);
@@ -795,10 +794,10 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
             if (activations != nullptr) {
                 activation_statistics(OutBuffer, nullptr, activations[0], layer.outputs * BOARD_SQUARES);
             }
-            if (typeid(net_t) == typeid(int8_t)) {
-                Activations<float> act;
-                activation_statistics(OutBuffer, nullptr, act, layer.outputs * BOARD_SQUARES);
-            }
+            //if (typeid(net_t) == typeid(int8_t)) {
+            //    Activations<float> act;
+            //    activation_statistics(OutBuffer, nullptr, act, layer.outputs * BOARD_SQUARES);
+            //}
 
             m_cudnn.convolveActivation(OutBuffer,
                          ResidualBuffer,
@@ -818,11 +817,11 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
                 activation_statistics(ResidualBuffer, nullptr, activations[0], layer.outputs * BOARD_SQUARES);
             }
 
-            if (typeid(net_t) == typeid(int8_t)) {
-                Activations<float> act;
-                activation_statistics(ResidualBuffer, InBuffer, act, layer.outputs * BOARD_SQUARES);
-                activation_statistics(ResidualBuffer, nullptr, act, layer.outputs * BOARD_SQUARES);
-            }
+            //if (typeid(net_t) == typeid(int8_t)) {
+            //    Activations<float> act;
+            //    activation_statistics(ResidualBuffer, InBuffer, act, layer.outputs * BOARD_SQUARES);
+            //    activation_statistics(ResidualBuffer, nullptr, act, layer.outputs * BOARD_SQUARES);
+            //}
 
             std::swap(InBuffer, ResidualBuffer);
             if (typeid(net_t) == typeid(int8_t) && niter->is_convolve1) {
