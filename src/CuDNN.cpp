@@ -580,7 +580,6 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
     /* Keeps track of how much we scaled the activations so that we can undo
      * the scaling at the end */
     float total_gain = 1.0f;
-    float trunk_gain = 1.0f;
 
     int i = 0;
 	for (auto iter = std::begin(m_layers); iter != std::end(m_layers); iter++) {
@@ -593,8 +592,6 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
             total_gain *= g;
             layer.scale_1 *= g;
             scale_float_tensor((float *)conv_biases[0], total_gain, layer.outputs);
-
-            trunk_gain *= g;
 
             myprintf("Input: g %.2f\n", total_gain);
         } else if (layer.is_residual_block) {
@@ -621,7 +618,6 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
 
             float g3 = activation_scale/(total_gain * (activations[i]));
             total_gain *= g3;
-            trunk_gain *= g3;
 
             myprintf("Res2 add: g %.2f\n", total_gain);
             myprintf("gs %.2f %.2f %.2f\n", g1, g2, g3);
@@ -693,11 +689,6 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
 		cudnn_context.m_ResidualBuffer = d_ResidualBuffer;
         cudnn_context.m_buffers_allocated = true;
 
-        //if (typeid(net_t) == typeid(int8_t)) {
-        //    auto act = std::vector<float>{11.16, 6.74, 6.39, 9.60, 6.12, 6.58, 13.62, 5.79, 7.76, 17.14, 6.37, 6.21, 21.74, 6.81, 5.45, 18.65, 5.73, 5.96, 19.15, 6.13, 6.39, 22.11, 8.04, 5.19, 21.78, 5.16, 4.92, 21.54, 4.87, 5.09, 18.60, 6.40, 6.39, 18.29, 6.79, 5.21, 20.06, 5.65, 5.68, 19.61, 6.70, 5.36, 20.72, 6.43, 5.64, 20.97, 5.38, 4.96, 20.67, 5.11, 6.07, 23.02, 5.29, 4.74, 25.29, 6.88, 8.31, 25.35, 5.93, 4.90, 21.64};
-
-        //    set_scales(act, 64.0f);
-        //}
     }
 
 	auto workspace = cudnn_context.m_workspace;

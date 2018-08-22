@@ -143,7 +143,7 @@ static float kl_divergence(std::vector<float> p, std::vector<float> q) {
 }
 
 static float entropy_calibration(std::vector<int> &hist, int hist_max) {
-	auto constexpr ref_size = 128;
+	auto constexpr ref_size = size_t{128};
 
 	if (hist.size() < ref_size) {
 		throw std::runtime_error("Histogram size is too small.");
@@ -151,20 +151,21 @@ static float entropy_calibration(std::vector<int> &hist, int hist_max) {
 	auto min_i = -1;
 	auto min_kl = 1e9;
 
-	/* Zero bin messes eveything up */
+	/* Zero bin messes everything up so get rid of it. */
 	hist[0] = hist[1];
-	for (auto i = ref_size; i < hist.size(); i+=1) {
+
+	for (auto i = ref_size; i < hist.size(); i++) {
 		std::vector<float> reference(i);
 		std::vector<float> candidate(i);
 
 		auto sum = 0.0f;
-		for (auto j = 0; j < i; j++) {
+		for (auto j = size_t{0}; j < i; j++) {
 			reference[j] = hist[j] + 0.5f;
 			candidate[j] = hist[j] + 0.5f;
 			sum += hist[j];
 		}
 		auto outliers = 0;
-		for (auto j = i; j < hist.size(); j++) {
+		for (auto j = size_t{i}; j < hist.size(); j++) {
 			outliers += hist[j];
 		}
 		reference[i - 1] += outliers;
@@ -187,7 +188,6 @@ static float entropy_calibration(std::vector<int> &hist, int hist_max) {
 			min_i = i;
 			min_kl = kl;
 		}
-		//myprintf("%.2g ", kl);
 	}
 	return (min_i + 0.5f) * float(hist_max) / float(hist.size());
 }
@@ -222,12 +222,6 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
     std::vector<float> value_data(Network::OUTPUTS_VALUE * BOARD_SQUARES);
 
 	std::vector<float> activations_acc;
-
-	std::vector<std::string> moves = {"q4", "d16", "d4", "r16", "p17", "q17", "p16", "r14", "f17", "c14", "d17", "c17", "c18", "e17", "d18", "e16", "c16", "e18", "c15", "d14", "k17", "c6", "c8", "r3", "q3", "r4", "r6", "r5", "q5", "s6", "c5", "d6", "f4", "c10", "d9", "d10", "f9", "h3", "k3", "e2", "c3", "k4", "l4", "j4", "l3", "k6", "g7", "l5", "m5", "m6", "n5", "n16", "l7", "l6", "q14", "q13", "p14", "r13", "l16", "q6", "r7", "s7", "o7", "r8", "q7", "q8", "p7", "n6", "e10", "o6", "p6", "o5", "o4", "g8", "h8", "g6", "f7", "e5", "f3", "h6", "f2", "h7", "h9", "e11", "f11", "f12", "j7", "k7", "k8", "m8", "l8", "n8", "o12", "n14", "p13", "k15", "l15", "l14", "k14", "l13", "j14", "m11", "n13", "g10", "d11", "e12", "g9", "j12", "p18", "m15", "m17", "n17", "n18", "o18", "m18", "q18", "q19", "r19", "p19", "h17", "j15", "b10", "j6", "j5", "j8", "b8", "f6", "o3", "n4", "p3", "p4", "q2", "r2", "p2", "n3", "s2", "b7", "c9", "d8", "p11", "p9", "n10", "o11", "k10", "a8", "q10", "r18", "a9", "b9", "q15", "p15", "b8", "q12", "a7", "b6", "r17", "s19", "p12", "q9", "r9", "o10", "q11", "g11", "g12", "h11", "h12", "s17", "s16", "t16", "t15", "t17", "r15", "b14", "b13", "b15", "j16", "k16", "h15", "h14", "g14", "h18", "g18", "j18", "g17", "g4", "g2", "f1", "j2", "n2", "k2", "h5", "h4", "g5", "o17", "o19", "b17", "b18", "a14", "a17", "o9", "p5", "l2", "a15", "a13", "a6"};
-	//std::vector<std::string> moves = {"q4", "d16", "d4", "r16", "k10"};
-
-	std::string to_move = "b";
-	std::string not_to_move = "w";
 
 	auto constexpr bins = 2048;
 
@@ -268,8 +262,9 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 	auto p = 0;
 
 	/* Examples to skip */
-	auto skip = 5;
+	auto skip = 11;
 
+	/* Skip counter */
 	auto skip_n = 0;
 
     while (std::getline(buffer, line)) {
@@ -311,37 +306,24 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 		}
 
 		n++;
-		//if (n > 19 * skip * 2000) {
-		//	break;
-		//}
 	}
 
 	myprintf("%d calibration examples\n", planes.size());
 
 	for (auto && input_data: planes) {
 
-		//const auto input_data = Network::gather_features(&state, Network::Ensemble::RANDOM_SYMMETRY);
-
-		//state.board.display_board();
 		Activations<float> activations;
 		scheduler.activations(input_data, activations, policy_data, value_data);
-		//for (auto i = 0; i < 10; i++) {
-		//	myprintf("%.2f ", policy_data[i]);
-		//}
+
 		if (activations_acc.size() != activations.size()) {
 			activations_acc.resize(activations.size());
 			histogram.resize(activations.size());
 			hist_max.resize(activations.size());
-			for (auto i = 0; i < histogram.size(); i++) {
+			for (auto i = size_t{0}; i < histogram.size(); i++) {
 				histogram[i].resize(bins);
 			}
 		}
 
-		//myprintf("%s: %s\n", to_move.c_str(), move.c_str());
-
-		//state.play_textmove(to_move, move);
-		std::swap(to_move, not_to_move);
-		float max_all = 0.0f;
 		float max = 0.0f;
 		for (auto i = size_t{0}; i < activations.size(); i++) {
 			float dev = 0.0f;
@@ -356,14 +338,20 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 			max = 0.0f;
 			add_to_hist(histogram[i], activations[i], hist_max[i]);
 			dev = std::sqrt(dev / (activations[i].size() - 1));
-			//activations_acc[i] += 2.0f * max / moves.size();
-			//activations_acc[i] += 10.0f * dev / moves.size();
+			//activations_acc[i] += 2.0f * max / activations[i].size();
+			//activations_acc[i] += 10.0f * dev / activations[i].size();
 		}
 	}
 
 	myprintf("max %f\n", hist_max[0]);
 	for (auto i = 0; i < bins; i++) {
 		myprintf("%d ", histogram[0][i]);
+	}
+	myprintf("\n");
+
+	myprintf("max %f\n", hist_max[hist_max.size()-2]);
+	for (auto i = 0; i < bins; i++) {
+		myprintf("%d ", histogram[hist_max.size()-2][i]);
 	}
 	myprintf("\n");
 

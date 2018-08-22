@@ -13,7 +13,7 @@ __global__ void int8_to_float_kernel(int8_t *input,
 }
 
 __global__ void scale_float_tensor_kernel(float *input,
-								   float scale,
+                                   float scale,
                                    int N) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 

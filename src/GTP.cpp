@@ -364,7 +364,6 @@ bool GTP::execute(GameState & game, std::string xinput) {
             cmdstream >> vertex;
 
             if (!cmdstream.fail()) {
-                myprintf("'%s'\n", vertex.c_str());
                 if (!game.play_textmove(color, vertex)) {
                     gtp_fail_printf(id, "illegal move");
                 } else {
