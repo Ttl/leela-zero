@@ -38,13 +38,13 @@ template <typename T>
 using Activations = std::vector<std::vector<T>>;
 
 struct conv_descriptor {
-	cudnnTensorDescriptor_t input_descriptor;
-	cudnnTensorDescriptor_t output_descriptor;
-	cudnnTensorDescriptor_t bias_descriptor;
-	cudnnFilterDescriptor_t kernel_descriptor;
-	cudnnActivationDescriptor_t activation_descriptor;
-	cudnnConvolutionDescriptor_t convolution_descriptor;
-	cudnnConvolutionFwdAlgo_t convolution_algorithm;
+    cudnnTensorDescriptor_t input_descriptor;
+    cudnnTensorDescriptor_t output_descriptor;
+    cudnnTensorDescriptor_t bias_descriptor;
+    cudnnFilterDescriptor_t kernel_descriptor;
+    cudnnActivationDescriptor_t activation_descriptor;
+    cudnnConvolutionDescriptor_t convolution_descriptor;
+    cudnnConvolutionFwdAlgo_t convolution_algorithm;
 };
 
 class CuDNN_Layer {
@@ -56,12 +56,12 @@ private:
     bool is_input_convolution{false};
     bool is_residual_block{false};
     bool is_convolve1{false};
-	conv_descriptor conv_desc;
-	float scale_1{1.0f};
-	float scale_2{1.0f};
-	float scale_3{1.0f};
+    conv_descriptor conv_desc;
+    float scale_1{1.0f};
+    float scale_2{1.0f};
+    float scale_3{1.0f};
     std::vector<void*> weights;
-	size_t workspace_size;
+    size_t workspace_size;
 };
 
 class CuDNNContext {
@@ -162,28 +162,28 @@ public:
 private:
 
 void convolve(void *bufferIn,
-			  void *bufferOut,
-			  void *weights,
-			  void *workspace,
-			  size_t workspace_bytes,
-			  const conv_descriptor& conv_desc,
+              void *bufferOut,
+              void *weights,
+              void *workspace,
+              size_t workspace_bytes,
+              const conv_descriptor& conv_desc,
               float alpha);
 
 void convolveActivation(void *bufferIn,
-					 void *bufferOut,
-					 void *weights,
-					 void *residualBuffer,
-					 void *biases,
-					 void *workspace,
-					 size_t workspace_bytes,
-					 const conv_descriptor& conv_desc,
+                     void *bufferOut,
+                     void *weights,
+                     void *residualBuffer,
+                     void *biases,
+                     void *workspace,
+                     size_t workspace_bytes,
+                     const conv_descriptor& conv_desc,
                      float alpha,
                      float alpha2 = 1.0f);
 
 size_t convolve_init(int channels, int outputs, int kernel_size,
-		conv_descriptor& conv_desc);
+        conv_descriptor& conv_desc);
 
-	cudnnHandle_t m_handle;
+    cudnnHandle_t m_handle;
     bool m_init_ok{false};
 };
 

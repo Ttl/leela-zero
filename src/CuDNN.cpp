@@ -50,6 +50,8 @@ using namespace Utils;
     }                                                        \
   }
 
+auto constexpr BATCH_SIZE = 1;
+
 void int8_to_float(int8_t *input, float *output, size_t N);
 void scale_float_tensor(float *input, float scale, size_t N);
 
@@ -57,8 +59,8 @@ template <typename net_t>
 void CuDNN<net_t>::initialize(const int channels, const int gpu,
                        bool silent) {
 
-	/* For compatibility with OpenCL implementation */
-	(void)channels;
+    /* For compatibility with OpenCL implementation */
+    (void)channels;
 
     auto best_bandwidth = 0.0f;
     auto found_device = false;
@@ -120,15 +122,15 @@ void CuDNN<net_t>::initialize(const int channels, const int gpu,
 
 template <typename net_t>
 void CuDNN<net_t>::convolve(void *bufferIn,
-					 void *bufferOut,
-					 void *weights,
-					 void *workspace,
-					 size_t workspace_bytes,
-					 const conv_descriptor& conv_desc,
+                     void *bufferOut,
+                     void *weights,
+                     void *workspace,
+                     size_t workspace_bytes,
+                     const conv_descriptor& conv_desc,
                      float alpha) {
 
     const float beta = 0.0f;
-	checkCUDNN(cudnnConvolutionForward(m_handle,
+    checkCUDNN(cudnnConvolutionForward(m_handle,
                                    &alpha,
                                    conv_desc.input_descriptor,
                                    bufferIn,
@@ -145,50 +147,50 @@ void CuDNN<net_t>::convolve(void *bufferIn,
 
 template <typename net_t>
 void CuDNN<net_t>::convolveActivation(void *bufferIn,
-					 void *bufferOut,
-					 void *weights,
-					 void *residualBuffer,
-					 void *biases,
-					 void *workspace,
-					 size_t workspace_bytes,
-					 const conv_descriptor& conv_desc,
+                     void *bufferOut,
+                     void *weights,
+                     void *residualBuffer,
+                     void *biases,
+                     void *workspace,
+                     size_t workspace_bytes,
+                     const conv_descriptor& conv_desc,
                      float alpha1,
                      float alpha2) {
 
-	void *residual = bufferOut;
+    void *residual = bufferOut;
 
-	float _alpha2 = 0.0f;
-	if (residualBuffer != nullptr) {
-		_alpha2 = alpha2;
-		residual = residualBuffer;
-	}
+    float _alpha2 = 0.0f;
+    if (residualBuffer != nullptr) {
+        _alpha2 = alpha2;
+        residual = residualBuffer;
+    }
 
     /* y = act ( alpha1 * conv(x) + alpha2 * z + bias ) */
 
-	checkCUDNN(cudnnConvolutionBiasActivationForward(
-			/* handle */m_handle,
-			/* alpha1 */&alpha1,
-			/* xDesc */conv_desc.input_descriptor,
-		    /* x */bufferIn,
-			/* wDesc */conv_desc.kernel_descriptor,
-			/* w */weights,
-			/* convDesc */conv_desc.convolution_descriptor,
+    checkCUDNN(cudnnConvolutionBiasActivationForward(
+            /* handle */m_handle,
+            /* alpha1 */&alpha1,
+            /* xDesc */conv_desc.input_descriptor,
+            /* x */bufferIn,
+            /* wDesc */conv_desc.kernel_descriptor,
+            /* w */weights,
+            /* convDesc */conv_desc.convolution_descriptor,
             /* algo */conv_desc.convolution_algorithm,
             /* workSpace */workspace,
             /* workSapceSize */workspace_bytes,
-			/* alpha2 */&_alpha2,
-			/* zDesc */conv_desc.output_descriptor,
-			/* z */residual,
-			/* biasDesc */conv_desc.bias_descriptor,
-			/* bias */biases,
-			/* activationDesc */conv_desc.activation_descriptor,
-			/* yDesc */conv_desc.output_descriptor,
-		    /* y */bufferOut));
+            /* alpha2 */&_alpha2,
+            /* zDesc */conv_desc.output_descriptor,
+            /* z */residual,
+            /* biasDesc */conv_desc.bias_descriptor,
+            /* bias */biases,
+            /* activationDesc */conv_desc.activation_descriptor,
+            /* yDesc */conv_desc.output_descriptor,
+            /* y */bufferOut));
 }
 
 template <typename net_t>
 size_t CuDNN<net_t>::convolve_init(int channels, int outputs, int kernel_size,
-		conv_descriptor& conv_desc) {
+        conv_descriptor& conv_desc) {
 
     cudnnDataType_t data_type;
     cudnnDataType_t bias_type;
@@ -222,66 +224,66 @@ size_t CuDNN<net_t>::convolve_init(int channels, int outputs, int kernel_size,
         }
     }
 
-	checkCUDNN(cudnnCreateTensorDescriptor(&conv_desc.input_descriptor));
-	checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.input_descriptor,
+    checkCUDNN(cudnnCreateTensorDescriptor(&conv_desc.input_descriptor));
+    checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.input_descriptor,
                                       /*format=*/tensor_format,
                                       /*dataType=*/data_type,
-                                      /*batch_size=*/1,
+                                      /*batch_size=*/BATCH_SIZE,
                                       /*channels=*/channels,
                                       /*image_height=*/BOARD_SIZE,
                                       /*image_width=*/BOARD_SIZE));
 
-	checkCUDNN(cudnnCreateTensorDescriptor(&conv_desc.output_descriptor));
-	checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.output_descriptor,
+    checkCUDNN(cudnnCreateTensorDescriptor(&conv_desc.output_descriptor));
+    checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.output_descriptor,
                                       /*format=*/tensor_format,
                                       /*dataType=*/data_type,
-                                      /*batch_size=*/1,
+                                      /*batch_size=*/BATCH_SIZE,
                                       /*channels=*/outputs,
                                       /*image_height=*/BOARD_SIZE,
                                       /*image_width=*/BOARD_SIZE));
 
-	checkCUDNN(cudnnCreateTensorDescriptor(&conv_desc.bias_descriptor));
-	checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.bias_descriptor,
+    checkCUDNN(cudnnCreateTensorDescriptor(&conv_desc.bias_descriptor));
+    checkCUDNN(cudnnSetTensor4dDescriptor(conv_desc.bias_descriptor,
                                       /*format=*/tensor_format,
                                       /*dataType=*/bias_type,
-                                      /*batch_size=*/1,
+                                      /*batch_size=*/BATCH_SIZE,
                                       /*channels=*/outputs,
                                       /*image_height=*/1,
                                       /*image_width=*/1));
 
-	checkCUDNN(cudnnCreateFilterDescriptor(&conv_desc.kernel_descriptor));
-	checkCUDNN(cudnnSetFilter4dDescriptor(conv_desc.kernel_descriptor,
-									  /*dataType=*/data_type,
-									  /*format=*/tensor_format,
-									  /*out_channels=*/outputs,
-									  /*in_channels=*/channels,
-									  /*kernel_height=*/kernel_size,
-									  /*kernel_width=*/kernel_size));
+    checkCUDNN(cudnnCreateFilterDescriptor(&conv_desc.kernel_descriptor));
+    checkCUDNN(cudnnSetFilter4dDescriptor(conv_desc.kernel_descriptor,
+                                      /*dataType=*/data_type,
+                                      /*format=*/tensor_format,
+                                      /*out_channels=*/outputs,
+                                      /*in_channels=*/channels,
+                                      /*kernel_height=*/kernel_size,
+                                      /*kernel_width=*/kernel_size));
 
-	checkCUDNN(cudnnCreateActivationDescriptor(&conv_desc.activation_descriptor));
-	checkCUDNN(cudnnSetActivationDescriptor(conv_desc.activation_descriptor,
-									  /*mode=*/CUDNN_ACTIVATION_RELU,
-									  /*NanPropagation=*/CUDNN_NOT_PROPAGATE_NAN,
-									  /*coef=*/0));
+    checkCUDNN(cudnnCreateActivationDescriptor(&conv_desc.activation_descriptor));
+    checkCUDNN(cudnnSetActivationDescriptor(conv_desc.activation_descriptor,
+                                      /*mode=*/CUDNN_ACTIVATION_RELU,
+                                      /*NanPropagation=*/CUDNN_NOT_PROPAGATE_NAN,
+                                      /*coef=*/0));
 
-	auto pad_size = 0;
+    auto pad_size = 0;
 
-	if (kernel_size == 1) {
-		pad_size = 0;
-	} else if (kernel_size == 3) {
-		pad_size = 1;
-	}
+    if (kernel_size == 1) {
+        pad_size = 0;
+    } else if (kernel_size == 3) {
+        pad_size = 1;
+    }
 
-	checkCUDNN(cudnnCreateConvolutionDescriptor(&conv_desc.convolution_descriptor));
-	checkCUDNN(cudnnSetConvolution2dDescriptor(conv_desc.convolution_descriptor,
-											   /*pad_height=*/pad_size,
-											   /*pad_width=*/pad_size,
-											   /*vertical_stride=*/1,
-											   /*horizontal_stride=*/1,
-											   /*dilation_height=*/1,
-											   /*dilation_width=*/1,
-											   /*mode=*/CUDNN_CROSS_CORRELATION,
-											   /*computeType=*/compute_type));
+    checkCUDNN(cudnnCreateConvolutionDescriptor(&conv_desc.convolution_descriptor));
+    checkCUDNN(cudnnSetConvolution2dDescriptor(conv_desc.convolution_descriptor,
+                                               /*pad_height=*/pad_size,
+                                               /*pad_width=*/pad_size,
+                                               /*vertical_stride=*/1,
+                                               /*horizontal_stride=*/1,
+                                               /*dilation_height=*/1,
+                                               /*dilation_width=*/1,
+                                               /*mode=*/CUDNN_CROSS_CORRELATION,
+                                               /*computeType=*/compute_type));
 
     if (typeid(net_t) == typeid(int8_t)) {
         conv_desc.convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
@@ -304,22 +306,22 @@ size_t CuDNN<net_t>::convolve_init(int channels, int outputs, int kernel_size,
 
         //myprintf("Layer %d %d %d\n", channels, outputs, kernel_size);
         //for (auto i = 0; i < returnedAlgoCount; i++) {
-        //	myprintf("Algo %d\n", perf[i].algo);
-        //	myprintf("Time %f\n", perf[i].time);
-        //	myprintf("Memory %zu\n", perf[i].memory);
-        //	myprintf("\n");
+        //    myprintf("Algo %d\n", perf[i].algo);
+        //    myprintf("Time %f\n", perf[i].time);
+        //    myprintf("Memory %zu\n", perf[i].memory);
+        //    myprintf("\n");
         //}
     }
 
-	size_t workspace_bytes = 0;
-	checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(m_handle,
-													   conv_desc.input_descriptor,
-													   conv_desc.kernel_descriptor,
-													   conv_desc.convolution_descriptor,
-													   conv_desc.output_descriptor,
-													   conv_desc.convolution_algorithm,
-													   &workspace_bytes));
-	return workspace_bytes;
+    size_t workspace_bytes = 0;
+    checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(m_handle,
+                                                       conv_desc.input_descriptor,
+                                                       conv_desc.kernel_descriptor,
+                                                       conv_desc.convolution_descriptor,
+                                                       conv_desc.output_descriptor,
+                                                       conv_desc.convolution_algorithm,
+                                                       &workspace_bytes));
+    return workspace_bytes;
 }
 
 template <typename net_t>
@@ -332,15 +334,15 @@ void CuDNN_Network<net_t>::add_weights_float(size_t layer,
 
     auto weightSize = size * sizeof(float);
 
-	void *device_mem;
-	auto err = cudaMalloc((void**)&device_mem, weightSize);
-	if (err != cudaSuccess) {
-		throw std::runtime_error("cudaMalloc failed.");
-	}
-	err = cudaMemcpy(device_mem, (net_t*)&weights[0], weightSize, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess) {
-		throw std::runtime_error("cudaMemcpy failed.");
-	}
+    void *device_mem;
+    auto err = cudaMalloc((void**)&device_mem, weightSize);
+    if (err != cudaSuccess) {
+        throw std::runtime_error("cudaMalloc failed.");
+    }
+    err = cudaMemcpy(device_mem, (net_t*)&weights[0], weightSize, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        throw std::runtime_error("cudaMemcpy failed.");
+    }
     m_layers.back().weights.emplace_back(device_mem);
 }
 
@@ -359,15 +361,15 @@ void CuDNN_Network<net_t>::add_weights(size_t layer,
 
     auto weightSize = size * sizeof(typename decltype(converted_weights)::value_type);
 
-	void *device_mem;
-	auto err = cudaMalloc((void**)&device_mem, weightSize);
-	if (err != cudaSuccess) {
-		throw std::runtime_error("cudaMalloc failed.");
-	}
-	err = cudaMemcpy(device_mem, (net_t*)&converted_weights[0], weightSize, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess) {
-		throw std::runtime_error("cudaMemcpy failed.");
-	}
+    void *device_mem;
+    auto err = cudaMalloc((void**)&device_mem, weightSize);
+    if (err != cudaSuccess) {
+        throw std::runtime_error("cudaMalloc failed.");
+    }
+    err = cudaMemcpy(device_mem, (net_t*)&converted_weights[0], weightSize, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        throw std::runtime_error("cudaMemcpy failed.");
+    }
     m_layers.back().weights.emplace_back(device_mem);
 }
 
@@ -582,7 +584,7 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
     float total_gain = 1.0f;
 
     int i = 0;
-	for (auto iter = std::begin(m_layers); iter != std::end(m_layers); iter++) {
+    for (auto iter = std::begin(m_layers); iter != std::end(m_layers); iter++) {
         auto& layer = *iter;
 
         if (layer.is_input_convolution) {
@@ -655,51 +657,51 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
         auto max_channels = unsigned{0};
         for (const auto& layer : m_layers) {
             max_wsize = std::max(max_wsize, layer.workspace_size);
-			max_channels = std::max(max_channels,
-								std::max(layer.channels, layer.outputs));
+            max_channels = std::max(max_channels,
+                                std::max(layer.channels, layer.outputs));
         }
-		auto alloc_insize = max_channels * one_plane;
+        auto alloc_insize = BATCH_SIZE * max_channels * one_plane;
 
-		void *d_workspace;
-		auto err = cudaMalloc((void**)&d_workspace, max_wsize);
-		if (err != cudaSuccess) {
-			throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
-		}
+        void *d_workspace;
+        auto err = cudaMalloc((void**)&d_workspace, max_wsize);
+        if (err != cudaSuccess) {
+            throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
+        }
 
-		void *d_InBuffer;
-		err = cudaMalloc((void**)&d_InBuffer, alloc_insize);
-		if (err != cudaSuccess) {
-			throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
-		}
+        void *d_InBuffer;
+        err = cudaMalloc((void**)&d_InBuffer, alloc_insize);
+        if (err != cudaSuccess) {
+            throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
+        }
 
-		void *d_OutBuffer;
-		err = cudaMalloc((void**)&d_OutBuffer, alloc_insize);
-		if (err != cudaSuccess) {
-			throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
-		}
+        void *d_OutBuffer;
+        err = cudaMalloc((void**)&d_OutBuffer, alloc_insize);
+        if (err != cudaSuccess) {
+            throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
+        }
 
-		void *d_ResidualBuffer;
-		err = cudaMalloc((void**)&d_ResidualBuffer, alloc_insize);
-		if (err != cudaSuccess) {
-			throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
-		}
-		cudnn_context.m_workspace = d_workspace;
-		cudnn_context.m_InBuffer = d_InBuffer;
-		cudnn_context.m_OutBuffer = d_OutBuffer;
-		cudnn_context.m_ResidualBuffer = d_ResidualBuffer;
+        void *d_ResidualBuffer;
+        err = cudaMalloc((void**)&d_ResidualBuffer, alloc_insize);
+        if (err != cudaSuccess) {
+            throw std::runtime_error("cudaMalloc failed: " + std::string(cudaGetErrorString(err)));
+        }
+        cudnn_context.m_workspace = d_workspace;
+        cudnn_context.m_InBuffer = d_InBuffer;
+        cudnn_context.m_OutBuffer = d_OutBuffer;
+        cudnn_context.m_ResidualBuffer = d_ResidualBuffer;
         cudnn_context.m_buffers_allocated = true;
 
     }
 
-	auto workspace = cudnn_context.m_workspace;
-	auto InBuffer = cudnn_context.m_InBuffer;
-	auto OutBuffer = cudnn_context.m_OutBuffer;
-	auto ResidualBuffer = cudnn_context.m_ResidualBuffer;
+    auto workspace = cudnn_context.m_workspace;
+    auto InBuffer = cudnn_context.m_InBuffer;
+    auto OutBuffer = cudnn_context.m_OutBuffer;
+    auto ResidualBuffer = cudnn_context.m_ResidualBuffer;
 
     /* Input must be padded with zeros when using int8 since the channels
      * are padded to 20 to be multiple of 4 */
-	const auto inSize = sizeof(net_t) * m_layers[0].channels * BOARD_SQUARES;
-    auto input_net_t = std::vector<net_t>(m_layers[0].channels * BOARD_SQUARES);
+    const auto inSize = BATCH_SIZE * sizeof(net_t) * m_layers[0].channels * BOARD_SQUARES;
+    auto input_net_t = std::vector<net_t>(BATCH_SIZE * m_layers[0].channels * BOARD_SQUARES);
 
     auto output_t_size = sizeof(net_t);
     if (typeid(net_t) == typeid(int8_t)) {
@@ -716,15 +718,15 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
     }
 
     if (typeid(net_t) == typeid(int8_t)) {
-        input_net_t = NCHW_to_NHWC<net_t>(input_net_t, batch_size, BOARD_SIZE, BOARD_SIZE, m_layers[0].channels);
+        input_net_t = NCHW_to_NHWC<net_t>(input_net_t, BATCH_SIZE, BOARD_SIZE, BOARD_SIZE, m_layers[0].channels);
     }
 
-	auto err = cudaMemcpy(InBuffer, (net_t*)&input_net_t[0], inSize, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess) {
-		throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
-	}
+    auto err = cudaMemcpy(InBuffer, (net_t*)&input_net_t[0], inSize, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
+    }
 
-	for (auto iter = std::begin(m_layers); iter != std::end(m_layers); iter++) {
+    for (auto iter = std::begin(m_layers); iter != std::end(m_layers); iter++) {
         const auto& layer = *iter;
         const auto niter = std::next(iter);
 
@@ -733,13 +735,13 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
             auto conv_weights = begin(layer.weights);
             auto conv_biases = begin(layer.weights) + 1;
             m_cudnn.convolveActivation(InBuffer,
-					 OutBuffer,
+                     OutBuffer,
                      conv_weights[0],
-					 nullptr,
+                     nullptr,
                      conv_biases[0],
-					 workspace,
-					 layer.workspace_size,
-					 layer.conv_desc,
+                     workspace,
+                     layer.workspace_size,
+                     layer.conv_desc,
                      layer.scale_1);
             if (activations != nullptr) {
                 activation_statistics(OutBuffer, nullptr, activations[0], layer.outputs * BOARD_SQUARES);
@@ -763,7 +765,7 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
             //    throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
             //}
 
-			std::swap(InBuffer, OutBuffer);
+            std::swap(InBuffer, OutBuffer);
         } else if (layer.is_residual_block) {
             assert(layer.channels == layer.outputs);
             assert(niter != std::end(m_layers));
@@ -773,13 +775,13 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
             auto conv2_biases = begin(layer.weights) + 3;
 
             m_cudnn.convolveActivation(InBuffer,
-					 OutBuffer,
+                     OutBuffer,
                      conv1_weights[0],
-					 nullptr,
+                     nullptr,
                      conv1_biases[0],
-					 workspace,
-					 layer.workspace_size,
-					 layer.conv_desc,
+                     workspace,
+                     layer.workspace_size,
+                     layer.conv_desc,
                      layer.scale_1);
 
             if (activations != nullptr) {
@@ -817,7 +819,7 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
             std::swap(InBuffer, ResidualBuffer);
             if (typeid(net_t) == typeid(int8_t) && niter->is_convolve1) {
                 /* Convert to float for convolve1 */
-                int8_to_float((int8_t*)InBuffer, (float*)OutBuffer, layer.outputs * BOARD_SQUARES);
+                int8_to_float((int8_t*)InBuffer, (float*)OutBuffer, BATCH_SIZE * layer.outputs * BOARD_SQUARES);
                 std::swap(InBuffer, OutBuffer);
             }
         } else {
@@ -838,26 +840,26 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
             //    myprintf("\n");
             //}
 
-			m_cudnn.convolve(InBuffer,
-				 OutBuffer,
-				 layer.weights[0],
-				 workspace,
-				 layer.workspace_size,
-				 layer.conv_desc,
+            m_cudnn.convolve(InBuffer,
+                 OutBuffer,
+                 layer.weights[0],
+                 workspace,
+                 layer.workspace_size,
+                 layer.conv_desc,
                  layer.scale_1);
 
             if (niter == std::end(m_layers)) {
-				/* Value */
-				auto err = cudaMemcpy(&val_net_t[0], OutBuffer, val_elements * output_t_size, cudaMemcpyDeviceToHost);
-				if (err != cudaSuccess) {
-					throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
-				}
+                /* Value */
+                auto err = cudaMemcpy(&val_net_t[0], OutBuffer, val_elements * output_t_size, cudaMemcpyDeviceToHost);
+                if (err != cudaSuccess) {
+                    throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
+                }
             } else {
-				/* Policy */
-				auto err = cudaMemcpy(&pol_net_t[0], OutBuffer, pol_elements * output_t_size, cudaMemcpyDeviceToHost);
-				if (err != cudaSuccess) {
-					throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
-				}
+                /* Policy */
+                auto err = cudaMemcpy(&pol_net_t[0], OutBuffer, pol_elements * output_t_size, cudaMemcpyDeviceToHost);
+                if (err != cudaSuccess) {
+                    throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
+                }
             }
         }
     }

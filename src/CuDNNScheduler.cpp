@@ -192,6 +192,11 @@ void CuDNNScheduler<net_t>::push_input_convolution(unsigned int filter_size,
 
             means_conv = scale_weights(means_conv, input_scale_int8, false);
         }
+        //else {
+        //    for (auto i = 0; i < weights_conv.size(); i++) {
+        //        weights_conv[i] = std::round(127.0f * weights_conv[i])/127.0f;
+        //    }
+        //}
 
         cudnn_net->push_input_convolution(
             filter_size, channels, outputs,
@@ -266,6 +271,13 @@ void CuDNNScheduler<net_t>::push_residual(unsigned int filter_size,
             means_1_conv = scale_weights(means_1_conv, input_scale_int8, false);
             means_2_conv = scale_weights(means_2_conv, input_scale_int8, false);
         }
+        //else {
+        //    for (auto i = 0; i < weights_1_conv.size(); i++) {
+        //        weights_1_conv[i] = std::round(127.0f * weights_1_conv[i])/127.0f;
+        //        weights_2_conv[i] = std::round(127.0f * weights_2_conv[i])/127.0f;
+        //    }
+
+        //}
 
         cudnn_net->push_residual(filter_size, channels, outputs,
                                   weights_1_conv,
