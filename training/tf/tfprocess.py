@@ -116,6 +116,11 @@ class TFProcess:
 
         # For exporting
         self.weights = []
+        self.quantization_limits = []
+        self.quantization_bits = 8
+
+        self.quantize = True
+        self.freeze_bn = False
 
         # Output weight file with averaged weights
         self.swa_enabled = True
@@ -380,12 +385,14 @@ class TFProcess:
         print("Restoring from {0}".format(file))
         optimistic_restore(self.session, file)
 
-    def measure_loss(self, batch, training=False):
+    def measure_loss(self, batch, training=False, freeze_bn=False):
         # Measure loss over one batch. If training is true, also
         # accumulate the gradient and increment the global step.
         ops = [self.policy_loss, self.mse_loss, self.reg_term, self.accuracy ]
         if training:
             ops += [self.grad_op, self.step_op],
+        if freeze_bn and training:
+            training = False
         r = self.session.run(ops, feed_dict={self.training: training,
                            self.planes: batch[0],
                            self.probs: batch[1],
@@ -401,7 +408,7 @@ class TFProcess:
         while True:
             batch = next(train_data)
             # Measure losses and compute gradients for this batch.
-            losses = self.measure_loss(batch, training=True)
+            losses = self.measure_loss(batch, training=True, freeze_bn=self.freeze_bn)
             stats.add(losses)
             # fetch the current global step.
             steps = tf.train.global_step(self.session, self.global_step)
@@ -418,6 +425,11 @@ class TFProcess:
                     stats.mean('total'), speed))
                 summaries = stats.summaries({'Policy Loss': 'policy',
                                              'MSE Loss': 'mse'})
+                print("Q thresholds:")
+                for i in self.quantization_limits:
+                    th = i.eval(session=self.session)
+                    print(th)
+                print("")
                 self.train_writer.add_summary(
                     tf.Summary(value=summaries), steps)
                 stats.clear()
@@ -526,7 +538,108 @@ class TFProcess:
 
         return net
 
-    def conv_block(self, inputs, filter_size, input_channels, output_channels, name):
+    def quantized_conv_folded_bn(self, name, inputs, W_conv, output_channels, residual=None, init_th=7.0):
+        momentum = 0.99
+        renorm = False
+        rmax = 3
+        dmax = 3
+
+        scope = self.get_batchnorm_key()
+
+        with tf.variable_scope(scope):
+            with tf.variable_scope('batch_normalization'):
+                beta = tf.get_variable('beta',
+                        initializer=tf.constant(0.0, shape=[output_channels]))
+
+                moving_mean = tf.get_variable('moving_mean',
+                        initializer=tf.constant(0.0, shape=[output_channels]),
+                        trainable=False)
+
+                moving_variance = tf.get_variable('moving_variance',
+                        initializer=tf.constant(1.0, shape=[output_channels]),
+                        trainable=False)
+
+        self.add_weights(beta)
+        self.add_weights(moving_mean)
+        self.add_weights(moving_variance)
+
+        # Now fold BN to conv weights
+        # Need stop_gradient here to make training stable
+        div = tf.stop_gradient(tf.rsqrt(moving_variance + tf.constant(1e-5)))
+
+        # Multiply batchnorm variance to weights
+        W_div = tf.multiply(div, W_conv, name=name + '_W_div')
+
+        # Quantize folded weights
+        max_W = tf.reduce_max(tf.abs(W_div))
+        W_q = tf.fake_quant_with_min_max_vars(W_div, -max_W, max_W,
+                num_bits=self.quantization_bits)
+
+        # Convolution with quantized weights
+        net = conv2d(inputs, W_q)
+
+        mean_batch_q, var_batch_q = tf.nn.moments(net, [0, 2, 3])
+
+        # Correct mean and variance for folding
+        mean_batch_q = mean_batch_q / div
+        var_batch_q = var_batch_q / div**2
+
+        div_batch_q = tf.rsqrt(var_batch_q + tf.constant(1e-5))
+
+        update_mean = tf.assign(moving_mean, tf.cond(self.training,
+            lambda: moving_mean * momentum + mean_batch_q * (1.0 - momentum),
+            lambda: moving_mean))
+
+        update_variance = tf.assign(moving_variance, tf.cond(self.training,
+            lambda: moving_variance * momentum + var_batch_q * (1.0 - momentum),
+            lambda: moving_variance))
+
+        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, update_mean)
+        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, update_variance)
+
+        # Correct output variances
+        correction = tf.divide(div_batch_q, div)
+        if renorm:
+            renorm_r = tf.stop_gradient(tf.clip_by_value(div/div_batch_q, 1.0/rmax, rmax))
+            correction = correction * renorm_r
+
+        # Expand C to 1C11 for broadcasting
+        correction = tf.expand_dims(correction, 0)
+        correction = tf.expand_dims(correction, -1)
+        correction = tf.expand_dims(correction, -1)
+
+        if renorm:
+            net = correction * net
+        else:
+            net = tf.cond(self.training,
+                    lambda: correction * net,
+                    lambda: tf.identity(net))
+
+        # Mean to bias
+        if renorm:
+            bias = beta - tf.multiply(mean_batch_q, div_batch_q, name=name + '_bias_train')
+            renorm_d = tf.stop_gradient(tf.clip_by_value(mean_batch_q * div_batch_q - moving_mean * div, -dmax, dmax))
+            bias = bias + renorm_d
+        else:
+            bias = tf.cond(self.training,
+                    lambda: beta - tf.multiply(mean_batch_q, div_batch_q, name=name + '_bias_train'),
+                    lambda: beta - tf.stop_gradient(tf.multiply(moving_mean, div, name=name + '_bias')))
+
+        net = tf.nn.bias_add(net, bias, data_format='NCHW')
+
+        if residual != None:
+            net = tf.add(net, residual)
+
+        net = tf.nn.relu(net)
+
+        # Quantize activations
+        q_th = tf.Variable(tf.constant(init_th))
+        self.quantization_limits.append(q_th)
+        net = tf.fake_quant_with_min_max_vars(net, tf.constant(0.0), q_th,
+               num_bits=self.quantization_bits - 1)
+        return net
+
+    def conv_block(self, inputs, filter_size, input_channels, output_channels, name, quantize=False):
         W_conv = weight_variable(
             name,
             [filter_size, filter_size, input_channels, output_channels])
@@ -534,12 +647,15 @@ class TFProcess:
         self.add_weights(W_conv)
 
         net = inputs
-        net = conv2d(net, W_conv)
-        net = self.batch_norm(net)
-        net = tf.nn.relu(net)
+        if not quantize:
+            net = conv2d(net, W_conv)
+            net = self.batch_norm(net)
+            net = tf.nn.relu(net)
+        else:
+            net = self.quantized_conv_folded_bn(name, net, W_conv, output_channels, init_th=4.5)
         return net
 
-    def residual_block(self, inputs, channels, name):
+    def residual_block(self, inputs, channels, name, quantize=False):
         net = inputs
         orig = tf.identity(net)
 
@@ -547,18 +663,24 @@ class TFProcess:
         W_conv_1 = weight_variable(name + "_conv_1", [3, 3, channels, channels])
         self.add_weights(W_conv_1)
 
-        net = conv2d(net, W_conv_1)
-        net = self.batch_norm(net)
-        net = tf.nn.relu(net)
+        if not quantize:
+            net = conv2d(net, W_conv_1)
+            net = self.batch_norm(net)
+            net = tf.nn.relu(net)
+        else:
+            net = self.quantized_conv_folded_bn(name + '_1', net, W_conv_1, channels, init_th=7.0)
 
         # Second convnet weights
         W_conv_2 = weight_variable(name + "_conv_2", [3, 3, channels, channels])
         self.add_weights(W_conv_2)
 
-        net = conv2d(net, W_conv_2)
-        net = self.batch_norm(net)
-        net = tf.add(net, orig)
-        net = tf.nn.relu(net)
+        if not quantize:
+            net = conv2d(net, W_conv_2)
+            net = self.batch_norm(net)
+            net = tf.add(net, orig)
+            net = tf.nn.relu(net)
+        else:
+            net = self.quantized_conv_folded_bn(name + '_2', net, W_conv_2, channels, orig, init_th=20.0)
 
         return net
 
@@ -567,16 +689,20 @@ class TFProcess:
         # batch, 18 channels, 19 x 19
         x_planes = tf.reshape(planes, [-1, 18, 19, 19])
 
+        quantize = self.quantize
+
         # Input convolution
         flow = self.conv_block(x_planes, filter_size=3,
                                input_channels=18,
                                output_channels=self.RESIDUAL_FILTERS,
-                               name="first_conv")
+                               name="first_conv",
+                               quantize=quantize)
         # Residual tower
         for i in range(0, self.RESIDUAL_BLOCKS):
             block_name = "res_" + str(i)
             flow = self.residual_block(flow, self.RESIDUAL_FILTERS,
-                                       name=block_name)
+                                       name=block_name,
+                                       quantize=quantize)
 
         # Policy head
         conv_pol = self.conv_block(flow, filter_size=1,
