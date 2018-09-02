@@ -166,37 +166,16 @@ void CuDNNScheduler<net_t>::push_input_convolution(unsigned int filter_size,
 
         float scale = 1.0f;
         if (typeid(net_t) == typeid(int8_t)) {
-
-            float amax = abs_max(weights_conv);
-            //float adev = dev_weight_int8 * std_dev(weights_conv);
-            scale = 127.0f/amax;
-
-            Utils::myprintf("Input scale %f\n", scale);
-
+            scale = 127.0f/abs_max(weights_conv);
             weights_conv = scale_weights(weights_conv, scale, true);
-
             weights_conv = KCRS_to_KRSC<float>(weights_conv,
                                                outputs,
                                                channels,
                                                filter_size,
                                                filter_size);
-            auto max = 0.0f;
-            auto dev = 0.0f;
-            for (auto i = size_t{0}; i < weights_conv.size(); i++) {
-                max = std::max(std::abs(weights_conv[i]), max);
-                dev += weights_conv[i] * weights_conv[i];
-            }
-            dev /= (weights_conv.size() - 1);
-            dev = std::sqrt(dev);
-            Utils::myprintf("Input conv: max %.2f, std %.2f\n", max, dev);
 
             means_conv = scale_weights(means_conv, input_scale_int8, false);
         }
-        //else {
-        //    for (auto i = 0; i < weights_conv.size(); i++) {
-        //        weights_conv[i] = std::round(127.0f * weights_conv[i])/127.0f;
-        //    }
-        //}
 
         cudnn_net->push_input_convolution(
             filter_size, channels, outputs,
@@ -216,10 +195,8 @@ void CuDNNScheduler<net_t>::push_residual(unsigned int filter_size,
                                            const std::vector<float>& means_2,
                                            const std::vector<float>& variances_2) {
     for (const auto& cudnn_net : m_networks) {
-
         std::vector<float> weights_1_conv = std::vector<float>(weights_1);
         std::vector<float> means_1_conv = std::vector<float>(means_1);
-
         std::vector<float> weights_2_conv = std::vector<float>(weights_2);
         std::vector<float> means_2_conv = std::vector<float>(means_2);
 
@@ -233,26 +210,15 @@ void CuDNNScheduler<net_t>::push_residual(unsigned int filter_size,
                            means_2_conv,
                            outputs, channels);
 
-
         /* Convolution alpha */
         float scale_1 = 1.0f;
         float scale_2 = 1.0f;
-
         /* Residual add alpha */
         float scale_3 = 1.0f;
 
         if (typeid(net_t) == typeid(int8_t)) {
-            float amax_1 = abs_max(weights_1_conv);
-            //float adev_1 = dev_weight_int8 * std_dev(weights_1_conv);
-            scale_1 = 127.0f/amax_1;
-
-            float amax_2 = abs_max(weights_2_conv);
-            //float adev_2 = dev_weight_int8 * std_dev(weights_2_conv);
-            scale_2 = 127.0f/amax_2;
-
-            Utils::myprintf("scale_1 %f\n", scale_1);
-            Utils::myprintf("scale_2 %f\n", scale_2);
-
+            scale_1 = 127.0f/abs_max(weights_1_conv);
+            scale_2 = 127.0f/abs_max(weights_2_conv);
             weights_1_conv = scale_weights(weights_1_conv, scale_1, true);
             weights_2_conv = scale_weights(weights_2_conv, scale_2, true);
 
@@ -271,13 +237,6 @@ void CuDNNScheduler<net_t>::push_residual(unsigned int filter_size,
             means_1_conv = scale_weights(means_1_conv, input_scale_int8, false);
             means_2_conv = scale_weights(means_2_conv, input_scale_int8, false);
         }
-        //else {
-        //    for (auto i = 0; i < weights_1_conv.size(); i++) {
-        //        weights_1_conv[i] = std::round(127.0f * weights_1_conv[i])/127.0f;
-        //        weights_2_conv[i] = std::round(127.0f * weights_2_conv[i])/127.0f;
-        //    }
-
-        //}
 
         cudnn_net->push_residual(filter_size, channels, outputs,
                                   weights_1_conv,

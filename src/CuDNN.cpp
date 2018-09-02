@@ -548,26 +548,17 @@ static std::vector<T> NCHW_to_NHWC(const std::vector<T> &x,
 }
 
 template <typename net_t>
-void CuDNN_Network<net_t>::activation_statistics(const void *InBuffer, const void *ResidualBuffer, Activations<float> &activations, size_t N) {
+void CuDNN_Network<net_t>::activation_statistics(const void *InBuffer, Activations<float> &activations, size_t N) {
     std::vector<net_t> output(N);
-    std::vector<net_t> residual(N);
 
     std::vector<float> activations_out;
 
     cudaMemcpy(&output[0], InBuffer, N * sizeof(net_t), cudaMemcpyDeviceToHost);
 
-    if (ResidualBuffer) {
-        cudaMemcpy(&residual[0], ResidualBuffer, N * sizeof(net_t), cudaMemcpyDeviceToHost);
-    }
-
     float dev = 0.0f;
     float max = 0.0f;
     for (auto i = size_t{0}; i < N; i++) {
-        auto res = net_t(0.0f);
-        if (ResidualBuffer) {
-            res = residual[i];
-        }
-        auto out = float(std::abs(net_t(output[i] - res)));
+        auto out = float(std::abs(net_t(output[i])));
         max = std::max(out, max);
         dev += out * out;
         activations_out.emplace_back(out);
@@ -595,41 +586,29 @@ void CuDNN_Network<net_t>::set_scales(const std::vector<float> activations, cons
             layer.scale_1 *= g;
             scale_float_tensor((float *)conv_biases[0], total_gain, layer.outputs);
 
-            myprintf("Input: g %.2f\n", total_gain);
         } else if (layer.is_residual_block) {
             auto conv1_biases = begin(layer.weights) + 1;
             auto conv2_biases = begin(layer.weights) + 3;
 
             float g1 = activation_scale/(total_gain * activations[i]);
             total_gain *= g1;
+            // Biases needs to be scaled the same amount
             scale_float_tensor((float *)conv1_biases[0], total_gain, layer.outputs);
-            myprintf("Res1: g %.2f\n", total_gain);
             i++;
             layer.scale_1 *= g1;
 
-            float g2 = activation_scale/(total_gain * (activations[i]));
-            total_gain *= g2;
-            scale_float_tensor((float *)conv2_biases[0], total_gain, layer.outputs);
-            myprintf("Res2: g %.2f\n", total_gain);
-            layer.scale_2 *= g2;
-            i++;
-
             /* Residual add scaling = residual block scaling */
             /* y = g3 * x + g1 * g2 * x */
-            layer.scale_3 *= g1 * g2;
+            layer.scale_3 *= g1;
 
             float g3 = activation_scale/(total_gain * (activations[i]));
             total_gain *= g3;
 
-            myprintf("Res2 add: g %.2f\n", total_gain);
-            myprintf("gs %.2f %.2f %.2f\n", g1, g2, g3);
-            scale_float_tensor((float *)conv2_biases[0], g3, layer.outputs);
+            scale_float_tensor((float *)conv2_biases[0], total_gain, layer.outputs);
             layer.scale_2 *= g3;
             layer.scale_3 *= g3;
-
         } else {
             /* Undo scaling at the end */
-            myprintf("End: g %.2f\n", total_gain);
             layer.scale_1 = 1.0f/total_gain;
         }
         i++;
@@ -649,6 +628,7 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
     const auto pol_elements = m_layers[m_layers.size()-2].outputs * BOARD_SQUARES;
     const auto val_elements = m_layers.back().outputs * BOARD_SQUARES;
 
+    /* FIXME: Needs to be half for half, float for single and int8 */
     auto pol_net_t = std::vector<float>(pol_elements);
     auto val_net_t = std::vector<float>(val_elements);
 
@@ -744,7 +724,7 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
                      layer.conv_desc,
                      layer.scale_1);
             if (activations != nullptr) {
-                activation_statistics(OutBuffer, nullptr, activations[0], layer.outputs * BOARD_SQUARES);
+                activation_statistics(OutBuffer, activations[0], layer.outputs * BOARD_SQUARES);
             }
 
             //std::vector<net_t> output(layer.outputs * BOARD_SQUARES);
@@ -785,12 +765,8 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
                      layer.scale_1);
 
             if (activations != nullptr) {
-                activation_statistics(OutBuffer, nullptr, activations[0], layer.outputs * BOARD_SQUARES);
+                activation_statistics(OutBuffer, activations[0], layer.outputs * BOARD_SQUARES);
             }
-            //if (typeid(net_t) == typeid(int8_t)) {
-            //    Activations<float> act;
-            //    activation_statistics(OutBuffer, nullptr, act, layer.outputs * BOARD_SQUARES);
-            //}
 
             m_cudnn.convolveActivation(OutBuffer,
                          ResidualBuffer,
@@ -804,17 +780,8 @@ void CuDNN_Network<net_t>::forward_activations(const std::vector<float>& input,
                          layer.scale_3);
 
             if (activations != nullptr) {
-                /* Convolve activation */
-                activation_statistics(ResidualBuffer, InBuffer, activations[0], layer.outputs * BOARD_SQUARES);
-                /* Trunk activation */
-                activation_statistics(ResidualBuffer, nullptr, activations[0], layer.outputs * BOARD_SQUARES);
+                activation_statistics(ResidualBuffer, activations[0], layer.outputs * BOARD_SQUARES);
             }
-
-            //if (typeid(net_t) == typeid(int8_t)) {
-            //    Activations<float> act;
-            //    activation_statistics(ResidualBuffer, InBuffer, act, layer.outputs * BOARD_SQUARES);
-            //    activation_statistics(ResidualBuffer, nullptr, act, layer.outputs * BOARD_SQUARES);
-            //}
 
             std::swap(InBuffer, ResidualBuffer);
             if (typeid(net_t) == typeid(int8_t) && niter->is_convolve1) {

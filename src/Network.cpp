@@ -424,7 +424,7 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
                     myprintf("Initializing CuDNN (single precision).\n");
                     auto cudnn_fp32 = init_net(std::make_unique<CuDNNScheduler<float>>());
                     auto activations = get_activations(*cudnn_fp32);
-                    //std::vector<float> activations = {2.70, 5.77, 4.19, 7.99, 5.49, 7.95, 12.06, 6.06, 8.00, 14.51, 6.37, 6.15, 15.89, 6.86, 7.02, 16.82, 6.97, 6.73, 17.29, 6.60, 8.18, 18.47, 7.72, 7.73, 19.57, 7.52, 7.23, 20.45, 6.91, 7.53, 19.85, 6.77, 7.00, 21.14, 6.86, 7.32, 20.84, 6.77, 7.08, 21.76, 6.89, 7.94, 22.09, 7.11, 8.96, 22.77};
+                    //std::vector<float> activations = {4.5, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.00, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0, 7.0, 20.0};
                     myprintf("Initializing CuDNN (int8 precision).\n");
                     m_forward = init_net(std::make_unique<CuDNNScheduler<int8_t>>());
                     m_forward->set_scales(activations, 127.0f);

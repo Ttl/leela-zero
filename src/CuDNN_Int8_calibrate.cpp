@@ -154,7 +154,7 @@ static float entropy_calibration(std::vector<int> &hist, int hist_max, float out
     /* Zero bin messes everything up so get rid of it. */
     hist[0] = hist[1];
 
-    for (auto i = ref_size; i < hist.size(); i++) {
+    for (auto i = ref_size; i < hist.size(); i+=5) {
         std::vector<float> reference(i);
         std::vector<float> candidate(i);
 
@@ -172,17 +172,17 @@ static float entropy_calibration(std::vector<int> &hist, int hist_max, float out
 
         reference[i - 1] += outliers;
         sum += outliers;
-        for (auto j = 0; j < i; j++) {
+        for (auto j = size_t{0}; j < i; j++) {
             reference[j] /= sum;
             candidate[j] /= (sum - outliers);
         }
         auto q_candidate = quantize_distribution(candidate, ref_size);
 
         sum = 0.0f;
-        for (auto j = 0; j < i; j++) {
+        for (auto j = size_t{0}; j < i; j++) {
             sum += q_candidate[j];
         }
-        for (auto j = 0; j < i; j++) {
+        for (auto j = size_t{0}; j < i; j++) {
             q_candidate[j] /= sum;
         }
         auto kl = kl_divergence(reference, q_candidate);
@@ -276,7 +276,7 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
             p = 0;
             continue;
         }
-        for (auto i = 0; i < line.size(); i++) {
+        for (auto i = size_t{0}; i < line.size(); i++) {
             auto h = hex_to_int(line[i]);
             /* History planes */
             if ( n % 19 < 16 ) {
@@ -328,20 +328,15 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
 
         float max = 0.0f;
         for (auto i = size_t{0}; i < activations.size(); i++) {
-            float dev = 0.0f;
             for (auto j = size_t{0}; j < activations[i].size(); j++) {
                 float a = activations[i][j];
                 max = std::max(max, a);
-                dev += a * a;
             }
             if (hist_max[i] == 0.0f) {
                 hist_max[i] = 2.0f * max;
             }
             max = 0.0f;
             add_to_hist(histogram[i], activations[i], hist_max[i]);
-            dev = std::sqrt(dev / (activations[i].size() - 1));
-            //activations_acc[i] += 2.0f * max / activations[i].size();
-            //activations_acc[i] += 10.0f * dev / activations[i].size();
         }
     }
 
@@ -364,14 +359,13 @@ std::vector<float> get_activations(CuDNNScheduler<float> &scheduler) {
     myprintf("\n");
 
     myprintf("Ths: \n");
+
+    // Extra importance to assign for saturating activations
+    auto outlier_weight = 3.0f;
     for (auto i = size_t{0}; i < histogram.size(); i++) {
-        auto outlier_weight = 1.0f;
-        if ((i - 1) % 3 == 2 && i > 1) {
-            /* Trunk */
-            outlier_weight = 2.0f;
-        }
         auto th = entropy_calibration(histogram[i], hist_max[i], outlier_weight);
         activations_acc[i] = th;
+        //activations_acc[i] = hist_max[i];
         myprintf("%.2f, ", th);
     }
     myprintf("\n");

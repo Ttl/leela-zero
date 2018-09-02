@@ -128,7 +128,7 @@ public:
 
 private:
 
-    void activation_statistics(const void *InBuffer, const void *ResidualBuffer, Activations<float> &activations, size_t N);
+    void activation_statistics(const void *InBuffer, Activations<float> &activations, size_t N);
 
     void push_weights(size_t layer, const std::vector<float>& weights, bool convert = true) {
         if (convert) {
