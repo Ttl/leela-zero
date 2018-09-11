@@ -4,7 +4,7 @@ import os
 import glob
 import multiprocessing
 
-leela_cmd = "../../src/leelaz -w ../../32_4_se.txt --cpu-only"
+leela_cmd = "../../src/leelaz -w ../../src/tests/32_4_se.txt --cpu-only"
 
 out_dir = "../../converted_chunks/"
 
