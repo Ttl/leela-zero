@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import namedtuple, defaultdict
 import pickle
+import re
 
 moves = []
 
@@ -15,6 +16,9 @@ assert len(numbers) == 19
 coords = [i+str(j) for i in letters for j in numbers]
 coord_to_idx = {coords[i]:i for i in range(len(coords))}
 coord_to_idx['pass'] = 361
+
+nn_match = re.compile('Nn: *[\d\.\%]*\)')
+vi_match = re.compile('Vi: *[\d]*\)')
 
 for filename in sys.argv[1:]:
     print filename
@@ -45,8 +49,14 @@ for filename in sys.argv[1:]:
             if '->' in line:
                 # Add simulation to the current move
                 coord = line[:4].strip()
-                nn = float(line[45:50].strip())/100.0
-                vi = float(line[58:65].strip())
+                nn_start = line.find('Nn:')
+                nn_end = line.find(')', nn_start)
+
+                vi_start = line.find('Vi:')
+                vi_end = line.find(')', vi_start)
+
+                nn = float(line[nn_start+4:nn_end-1])/100.0
+                vi = float(line[vi_start+4:vi_end])
                 visits = vi
                 nns[coord_to_idx[coord]] = nn
             if 'non leaf nodes' in line:
@@ -113,11 +123,13 @@ for move in moves:
 
     entropy = 0
     for s in move[max_visits]:
+        # s = [visits, pols]
         if s[0] > 0 and s[1] > 0:
             # Loss of policy head (0 visits)
             loss[0] += -s[0]*np.log(s[1]/s[0])
         elif s[0] > 0:
-            raise ValueError("Non-zero visits but 0 policy")
+            loss[0] += -s[0]*np.log(1e-5/s[0])
+            #raise ValueError("Non-zero visits but 0 policy")
 
         # Policy head entropy
         # Illegal moves have 0 policy
@@ -146,6 +158,7 @@ for move in moves:
     max_pol = np.max([move[max_visits][i][1] for i in range(362)])
 
     policy_chosen_move.append(move[max_visits][best_idx][1])
+
     policy_max.append(max_pol)
 
     for e, c in enumerate(changed):
@@ -159,6 +172,13 @@ for move in moves:
     mses.append(mse)
     nn_changes.append(nn_change)
     move_changed.append(changed)
+
+plt.figure()
+plt.title('Policy of the chosen move')
+plt.plot(sorted(policy_chosen_move))
+plt.ylabel('Policy')
+plt.xlabel('Move number')
+plt.yscale('log')
 
 if any(len(policy_loss[i]) != len(policy_loss[0]) for i in range(len(policy_loss))):
     raise ValueError("Moves have different visit counts")
@@ -250,11 +270,13 @@ print opt[np.searchsorted(ref_visits, 3200)]
 print max(opt_changed), ref_visits[np.argmax(opt_changed)]
 
 plt.figure()
-plt.title('Move changed')
-plt.plot(ref_visits, move_changed_avg)
+plt.title('Top move same as at the maximum visits')
+plt.plot(ref_visits, 100.0*(1 - move_changed_avg))
+#plt.xscale('log')
+plt.ylabel('Percentage')
 plt.xlabel('Visits')
 
-if 0:
+if 1:
     max_sorted, chosen_sorted = zip(*sorted(zip(policy_max, policy_chosen_move)))
     entropy_sorted, move_changed_entropy = zip(*sorted(zip(policy_entropy, visits_to_change)))
 
