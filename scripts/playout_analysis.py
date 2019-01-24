@@ -49,20 +49,25 @@ for filename in sys.argv[1:]:
             if '->' in line:
                 # Add simulation to the current move
                 coord = line[:4].strip()
-                nn_start = line.find('Nn:')
-                nn_end = line.find(')', nn_start)
+                nn_start = line.find('->')
+                nn_end = line.find('(', nn_start)
 
                 vi_start = line.find('Vi:')
                 vi_end = line.find(')', vi_start)
 
-                nn = float(line[nn_start+4:nn_end-1])/100.0
+                nn = float(line[nn_start+4:nn_end-1])
                 vi = float(line[vi_start+4:vi_end])
                 visits = vi
                 nns[coord_to_idx[coord]] = nn
             if 'non leaf nodes' in line:
                 # Visits increased
+                nns /= np.sum(nns)
+                # Gets rid of rounding errors
+                pols /= np.sum(pols)
                 current_move[visits] = zip(nns, pols)
-                nns = [0]*362
+                # Need to assign some non-zero probability to all moves
+                # Divide one half of visit to all moves at the start
+                nns = [0.5/362]*362
 
     # Add the last move
     moves.append(current_move)
@@ -128,7 +133,7 @@ for move in moves:
             # Loss of policy head (0 visits)
             loss[0] += -s[0]*np.log(s[1]/s[0])
         elif s[0] > 0:
-            loss[0] += -s[0]*np.log(1e-5/s[0])
+            loss[0] += -s[0]*np.log(1e-9/s[0])
             #raise ValueError("Non-zero visits but 0 policy")
 
         # Policy head entropy
