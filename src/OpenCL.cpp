@@ -177,7 +177,7 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
             MAX_BATCH * m_ceil * m_ceil * max_channels * sizeof(net_t);
         const auto alloc_vm_size =
             MAX_BATCH * WINOGRAD_TILE * m_ceil * n_ceil * sizeof(net_t);
-        const auto alloc_pool_size = MAX_BATCH * max_channels * sizeof(net_t);
+        const auto alloc_pool_size = MAX_BATCH * 2 * max_channels * sizeof(net_t);
 
         auto v_zeros = std::vector<net_t>(alloc_vm_size);
 
@@ -264,9 +264,9 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
 
             auto conv1_weights = begin(layer.weights);
             auto bn1_weights   = begin(layer.weights) + 1;
-            auto conv2_weights = begin(layer.weights) + 4;
-            auto bn2_weights   = begin(layer.weights) + 5;
-            auto se_weights    = begin(layer.weights) + 7;
+            auto conv2_weights = begin(layer.weights) + 3;
+            auto bn2_weights   = begin(layer.weights) + 4;
+            auto se_weights    = begin(layer.weights) + 6;
 
             convolve3(opencl_context,
                       layer.channels,
@@ -385,32 +385,19 @@ void OpenCL_Network<net_t>::squeeze_excitation(
         throw;
     }
 
-    innerproduct(opencl_context,
-            bufferTemp1,
-            weights[0],
-            weights[1],
-            bufferTemp2,
-            channels,
-            fc_outputs,
-            true,
-            batch_size);
 
-    innerproduct(opencl_context,
-            bufferTemp2,
-            weights[2],
-            weights[3],
-            bufferTemp1,
-            fc_outputs,
-            channels,
-            false,
-            batch_size);
+  innerproduct(opencl_context, bufferTemp1, weights[0], weights[1], bufferTemp2, channels,
+               fc_outputs, true, batch_size);
 
-    try {
+  innerproduct(opencl_context, bufferTemp2, weights[2], weights[3], bufferTemp1, fc_outputs,
+               2 * channels, false, batch_size);
+
+  try {
         apply_se_kernel.setArg(0, channels);
-        apply_se_kernel.setArg(1, bufferIn);
-        apply_se_kernel.setArg(2, bufferResidual);
-        apply_se_kernel.setArg(3, bufferTemp1);
-        apply_se_kernel.setArg(4, weights[4]);
+        apply_se_kernel.setArg(1, batch_size);
+        apply_se_kernel.setArg(2, bufferIn);
+        apply_se_kernel.setArg(3, bufferResidual);
+        apply_se_kernel.setArg(4, bufferTemp1);
 
         queue.enqueueNDRangeKernel(apply_se_kernel, cl::NullRange,
                                    cl::NDRange(BOARD_SIZE, batch_size * channels));
@@ -419,7 +406,6 @@ void OpenCL_Network<net_t>::squeeze_excitation(
             << e.err() << std::endl;
         throw;
     }
-
 }
 
 template <typename net_t>
@@ -594,8 +580,7 @@ void OpenCL_Network<net_t>::convolve3(OpenCLContext & opencl_context,
             }
             out_transform_bn_in_kernel.setArg(8, bn_weights[0]);
             out_transform_bn_in_kernel.setArg(9, bn_weights[1]);
-            out_transform_bn_in_kernel.setArg(10, bn_weights[2]);
-            out_transform_bn_in_kernel.setArg(11,
+            out_transform_bn_in_kernel.setArg(10,
                 cl::Local(dim_size * width * height * sizeof(float)));
 
             queue.enqueueNDRangeKernel(out_transform_bn_in_kernel,
@@ -616,8 +601,7 @@ void OpenCL_Network<net_t>::convolve3(OpenCLContext & opencl_context,
             }
             out_transform_bn_kernel.setArg(7, bn_weights[0]);
             out_transform_bn_kernel.setArg(8, bn_weights[1]);
-            out_transform_bn_kernel.setArg(9, bn_weights[2]);
-            out_transform_bn_kernel.setArg(10, static_cast<int>(relu));
+            out_transform_bn_kernel.setArg(9, static_cast<int>(relu));
 
             queue.enqueueNDRangeKernel(out_transform_bn_kernel, cl::NullRange,
                                        cl::NDRange(outputs, wgs));

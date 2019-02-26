@@ -211,7 +211,6 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
                                      __global const net_t * restrict residual,
                                      __constant const net_t * restrict means,
                                      __constant const net_t * restrict stddivs,
-                                     __constant const net_t * restrict prelu_alphas,
                                      const int relu) {
 
     const int W = BOARD_SIZE;
@@ -237,11 +236,6 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
         const real mean = vload_net_t(k, means);
         const real scale_stddiv = vload_net_t(k, stddivs);
 
-        real prelu_alpha = 0.0f;
-        if (relu) {
-            const real prelu_alpha = vload_net_t(k, prelu_alphas);
-        }
-
         for (int i = 0; i < WINOGRAD_M; i++) {
             for (int j = 0; j < WINOGRAD_M; j++) {
                 const int in_idx = i * WINOGRAD_M + j;
@@ -252,7 +246,7 @@ __kernel void out_transform_fused_bn(__global const net_t * restrict M,
                         o[in_idx] += vload_net_t(kHW + out_idx, residual);
                     }
                     if (relu) {
-                        o[in_idx] = o[in_idx] > 0 ? o[in_idx] : prelu_alpha*o[in_idx];
+                        o[in_idx] = o[in_idx] > 0 ? o[in_idx] : 0.0f;
                     }
                     vstore_net_t(o[in_idx], kHW + out_idx, Y);
                 }
@@ -270,7 +264,6 @@ __kernel void out_transform_fused_bn_in(
                                      __global const net_t * restrict residual,
                                      __constant const net_t * restrict means,
                                      __constant const net_t * restrict stddivs,
-                                     __constant const net_t * restrict prelu_alphas,
                                      __local real * ybuf) {
 
     const int W = BOARD_SIZE;
@@ -299,7 +292,6 @@ __kernel void out_transform_fused_bn_in(
 
         const real mean = vload_net_t(k, means);
         const real scale_stddiv = vload_net_t(k, stddivs);
-        const real prelu_alpha = vload_net_t(k, prelu_alphas);
 
         for (int i = 0; i < WINOGRAD_M; i++) {
             for (int j = 0; j < WINOGRAD_M; j++) {
@@ -310,7 +302,7 @@ __kernel void out_transform_fused_bn_in(
                     if (residual) {
                         o[in_idx] += vload_net_t(kHW + out_idx, residual);
                     }
-                    o[in_idx] = o[in_idx] > 0 ? o[in_idx] : prelu_alpha * o[in_idx];
+                    o[in_idx] = o[in_idx] > 0 ? o[in_idx] : 0.0f;
                     ybuf[kg * BOARD_SQUARES + out_idx] = o[in_idx];
                     if (Y) {
                         vstore_net_t(o[in_idx], kHW + out_idx, Y);

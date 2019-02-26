@@ -37,8 +37,7 @@ public:
                                         unsigned int outputs,
                                         const std::vector<float>& weights,
                                         const std::vector<float>& means,
-                                        const std::vector<float>& variances,
-                                        const std::vector<float>& prelu_alphas);
+                                        const std::vector<float>& variances);
 
     virtual void push_residual(unsigned int filter_size,
                                unsigned int channels,
@@ -47,11 +46,9 @@ public:
                                const std::vector<float>& weights_1,
                                const std::vector<float>& means_1,
                                const std::vector<float>& variances_1,
-                               const std::vector<float>& prelu_alphas_1,
                                const std::vector<float>& weights_2,
                                const std::vector<float>& means_2,
                                const std::vector<float>& variances_2,
-                               const std::vector<float>& prelu_alphas_2,
                                const std::vector<float>& se_fc1_w,
                                const std::vector<float>& se_fc1_b,
                                const std::vector<float>& se_fc2_w,

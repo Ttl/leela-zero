@@ -199,14 +199,14 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
         }
         linecount++;
     }
-    // 1 format id, 1 input layer (6 x weights), 16 ending weights,
-    // the rest are residuals, every residual has 16 x weight lines
-    auto residual_blocks = linecount - (1 + 6 + 16);
-    if (residual_blocks % 16 != 0) {
+    // 1 format id, 1 input layer (5 x weights), 14 ending weights,
+    // the rest are residuals, every residual has 14 x weight lines
+    auto residual_blocks = linecount - (1 + 5 + 14);
+    if (residual_blocks % 14 != 0) {
         myprintf("\nInconsistent number of weights in the file.\n");
         return {0, 0};
     }
-    residual_blocks /= 16;
+    residual_blocks /= 14;
     myprintf("%d blocks.\n", residual_blocks);
 
     // Re-read file and process
@@ -216,8 +216,8 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
     // Get the file format id out of the way
     std::getline(wtfile, line);
 
-    const auto input_weights = 6;
-    const auto plain_conv_wts = input_weights + residual_blocks * 16;
+    const auto input_weights = 5;
+    const auto plain_conv_wts = input_weights + residual_blocks * 14;
     linecount = 0;
     while (std::getline(wtfile, line)) {
         std::vector<float> weights;
@@ -230,7 +230,7 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
             return {0,0};
         }
         if (linecount < input_weights) {
-            if (linecount % 6 == 0) {
+            if (linecount % 5 == 0) {
                 m_conv_weights.emplace_back(weights);
             } else if (linecount % 6 == 1) {
                 m_batchnorm_gammas.emplace_back(weights);
@@ -241,11 +241,9 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
             } else if (linecount % 6 == 4) {
                 process_bn_var(weights);
                 m_batchnorm_stddivs.emplace_back(weights);
-            } else if (linecount % 6 == 5) {
-                m_prelu_alphas.emplace_back(weights);
             }
         } else if (linecount < plain_conv_wts) {
-            switch ((linecount - input_weights) % 16) {
+            switch ((linecount - input_weights) % 14) {
                 case 0:
                     assert(weights.size() == size_t{channels * channels * 9});
                     m_conv_weights.emplace_back(weights);
@@ -268,46 +266,38 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
                     m_batchnorm_stddivs.emplace_back(weights);
                     break;
                 case 5:
-                    assert(weights.size() == size_t{channels});
-                    m_prelu_alphas.emplace_back(weights);
-                    break;
-                case 6:
                     assert(weights.size() == size_t{channels * channels * 9});
                     m_conv_weights.emplace_back(weights);
                     break;
-                case 7:
+                case 6:
                     assert(weights.size() == size_t{channels});
                     m_batchnorm_gammas.emplace_back(weights);
                     break;
-                case 8:
+                case 7:
                     assert(weights.size() == size_t{channels});
                     m_batchnorm_betas.emplace_back(weights);
                     break;
-                case 9:
+                case 8:
                     assert(weights.size() == size_t{channels});
                     m_batchnorm_means.emplace_back(weights);
                     break;
-                case 10:
+                case 9:
                     assert(weights.size() == size_t{channels});
                     process_bn_var(weights);
                     m_batchnorm_stddivs.emplace_back(weights);
                     break;
-                case 11:
+                case 10:
                     m_se_fc1_w.emplace_back(weights);
                     break;
-                case 12:
+                case 11:
                     m_se_fc1_b.emplace_back(weights);
                     break;
-                case 13:
+                case 12:
                     m_se_fc2_w.emplace_back(weights);
                     break;
-                case 14:
-                    assert(weights.size() == size_t{channels});
+                case 13:
+                    assert(weights.size() == size_t{2 * channels});
                     m_se_fc2_b.emplace_back(weights);
-                    break;
-                case 15:
-                    assert(weights.size() == size_t{channels});
-                    m_prelu_alphas.emplace_back(weights);
                     break;
             }
         } else if (linecount == plain_conv_wts) {
@@ -320,29 +310,25 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
             process_bn_var(weights);
             std::copy(cbegin(weights), cend(weights), begin(m_bn_pol_w2));
         } else if (linecount == plain_conv_wts + 4) {
-            std::copy(cbegin(weights), cend(weights), begin(m_prelu_pol_alpha));
-        } else if (linecount == plain_conv_wts + 5) {
             std::copy(cbegin(weights), cend(weights), begin(m_ip_pol_w));
-        } else if (linecount == plain_conv_wts + 6) {
+        } else if (linecount == plain_conv_wts + 5) {
             std::copy(cbegin(weights), cend(weights), begin(m_ip_pol_b));
-        } else if (linecount == plain_conv_wts + 7) {
+        } else if (linecount == plain_conv_wts + 6) {
             m_conv_val_w = std::move(weights);
-        } else if (linecount == plain_conv_wts + 8) {
+        } else if (linecount == plain_conv_wts + 7) {
             m_conv_val_b = std::move(weights);
-        } else if (linecount == plain_conv_wts + 9) {
+        } else if (linecount == plain_conv_wts + 8) {
             std::copy(cbegin(weights), cend(weights), begin(m_bn_val_w1));
-        } else if (linecount == plain_conv_wts + 10) {
+        } else if (linecount == plain_conv_wts + 9) {
             process_bn_var(weights);
             std::copy(cbegin(weights), cend(weights), begin(m_bn_val_w2));
-        } else if (linecount == plain_conv_wts + 11) {
-            std::copy(cbegin(weights), cend(weights), begin(m_prelu_val_alpha));
-        } else if (linecount == plain_conv_wts + 12) {
+        } else if (linecount == plain_conv_wts + 10) {
             std::copy(cbegin(weights), cend(weights), begin(m_ip1_val_w));
-        } else if (linecount == plain_conv_wts + 13) {
+        } else if (linecount == plain_conv_wts + 11) {
             std::copy(cbegin(weights), cend(weights), begin(m_ip1_val_b));
-        } else if (linecount == plain_conv_wts + 14) {
+        } else if (linecount == plain_conv_wts + 12) {
             std::copy(cbegin(weights), cend(weights), begin(m_ip2_val_w));
-        } else if (linecount == plain_conv_wts + 15) {
+        } else if (linecount == plain_conv_wts + 13) {
             std::copy(cbegin(weights), cend(weights), begin(m_ip2_val_b));
         }
         linecount++;
@@ -383,7 +369,7 @@ std::pair<int, int> Network::load_network_file(const std::string& filename) {
         auto iss = std::stringstream{line};
         // First line is the file format version id
         iss >> format_version;
-        if (iss.fail() || (format_version != 502)) {
+        if (iss.fail() || (format_version != 101)) {
             myprintf("Weights file is the wrong version.\n");
             if (format_version == 1 || format_version == 2) {
                 myprintf("Old weights are not supported at the moment.");
@@ -518,8 +504,7 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
         // Winograd filter transformation changes filter size to 4x4
         p->push_input_convolution(WINOGRAD_ALPHA, INPUT_CHANNELS,
             channels, m_conv_weights[weight_index],
-            m_batchnorm_means[weight_index], m_batchnorm_stddivs[weight_index],
-            m_prelu_alphas[weight_index]);
+            m_batchnorm_means[weight_index], m_batchnorm_stddivs[weight_index]);
         weight_index++;
 
         // residual blocks
@@ -531,11 +516,9 @@ void Network::initialize(int playouts, const std::string & weightsfile) {
                                       m_conv_weights[weight_index],
                                       m_batchnorm_means[weight_index],
                                       m_batchnorm_stddivs[weight_index],
-                                      m_prelu_alphas[weight_index],
                                       m_conv_weights[weight_index + 1],
                                       m_batchnorm_means[weight_index + 1],
                                       m_batchnorm_stddivs[weight_index + 1],
-                                      m_prelu_alphas[weight_index + 1],
                                       m_se_fc1_w[i],
                                       m_se_fc1_b[i],
                                       m_se_fc2_w[i],
@@ -615,24 +598,22 @@ void batchnorm(const size_t channels,
                std::vector<float>& data,
                const float* const means,
                const float* const stddivs,
-               const float* const prelu_alphas,
                const bool relu = true,
                const float* const eltwise = nullptr)
 {
-    const auto lambda_PReLU = [](const auto val, const auto alpha) { return (val > 0.0f) ?
-                                                                    val : alpha * val; };
+    const auto lambda_ReLU = [](const auto val) { return (val > 0.0f) ?
+                                                          val : 0.0f; };
     for (auto c = size_t{0}; c < channels; ++c) {
         const auto mean = means[c];
         const auto scale_stddiv = stddivs[c];
         const auto arr = &data[c * spatial_size];
-        const auto prelu_alpha = prelu_alphas[c];
 
         if (eltwise == nullptr) {
             // Classical BN
             for (auto b = size_t{0}; b < spatial_size; b++) {
                 auto val = scale_stddiv * (arr[b] - mean);
                 if (relu) {
-                    val = lambda_PReLU(val, prelu_alpha);
+                    val = lambda_ReLU(val);
                 }
                 arr[b] = val;
             }
@@ -642,7 +623,7 @@ void batchnorm(const size_t channels,
             for (auto b = size_t{0}; b < spatial_size; b++) {
                 auto val = scale_stddiv * (arr[b] - mean) + res[b];
                 if (relu) {
-                    val = lambda_PReLU(val, prelu_alpha);
+                    val = lambda_ReLU(val);
                 }
                 arr[b] = val;
             }
@@ -854,7 +835,7 @@ Network::Netresult Network::get_output_internal(
 
     // Get the moves
     batchnorm<BOARD_SQUARES>(OUTPUTS_POLICY, policy_data,
-        m_bn_pol_w1.data(), m_bn_pol_w2.data(), m_prelu_pol_alpha.data());
+        m_bn_pol_w1.data(), m_bn_pol_w2.data());
     const auto policy_out =
         innerproduct<OUTPUTS_POLICY * BOARD_SQUARES, BOARD_SQUARES + 1, false>(
             policy_data, m_ip_pol_w, m_ip_pol_b);
@@ -862,7 +843,7 @@ Network::Netresult Network::get_output_internal(
 
     // Now get the value
     batchnorm<BOARD_SQUARES>(OUTPUTS_VALUE, value_data,
-        m_bn_val_w1.data(), m_bn_val_w2.data(), m_prelu_val_alpha.data());
+        m_bn_val_w1.data(), m_bn_val_w2.data());
     const auto winrate_data =
         innerproduct<BOARD_SQUARES, 256, true>(value_data, m_ip1_val_w, m_ip1_val_b);
     const auto winrate_out =

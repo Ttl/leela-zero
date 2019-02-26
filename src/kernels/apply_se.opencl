@@ -22,31 +22,34 @@
 R"(
     __kernel void apply_se(
                   const int channels,
+                  const int batch_size,
                   __global const net_t * restrict input,
                   __global net_t * restrict residual,
-                  __constant const net_t * restrict scales,
-                  __constant const net_t * restrict prelu_alphas) {
+                  __constant const net_t * restrict fc_out) {
 
         const int col = get_global_id(0);  // column
         const int c = get_global_id(1);  // channel
 
-        if (c < channels && col < BOARD_SIZE) {
-            const real prelu_alpha = vload_net_t(c, prelu_alphas);
-            real sig_scale = vload_net_t(c, scales);
-            sig_scale = 1.0f/(1.0f + exp(-sig_scale));
+        const int batch = c / channels;
+
+        if (c < batch_size * channels && col < BOARD_SIZE) {
+            real gamma = vload_net_t(c + batch * channels, fc_out);
+            gamma = 1.0f/(1.0f + exp(-gamma)); // Sigmoid
+            real beta = vload_net_t(c + batch * channels + channels, fc_out);
 
             for ( int i = 0; i < BOARD_SIZE; i++) {
-                const int idx = c * BOARD_SQUARES + col * BOARD_SIZE + i;
+                const int idx = c * BOARD_SQUARES + i * BOARD_SIZE + col;
                 const real in = vload_net_t(idx, input);
                 const real res = vload_net_t(idx, residual);
 
-                real val = sig_scale * in + res;
+                real val = gamma * in + res + beta;
 
-                val = val > 0.0f ? val : prelu_alpha * val;
+                val = val > 0.0f ? val : 0.0f;
 
                 vstore_net_t(val, idx, residual);
             }
         }
     }
+
 // End of the C++11 raw string literal
 )"

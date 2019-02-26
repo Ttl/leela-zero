@@ -96,8 +96,7 @@ void OpenCLScheduler<net_t>::push_input_convolution(unsigned int filter_size,
                                                     unsigned int outputs,
                                                     const std::vector<float>& weights,
                                                     const std::vector<float>& means,
-                                                    const std::vector<float>& variances,
-                                                    const std::vector<float>& prelu_alphas) {
+                                                    const std::vector<float>& variances) {
     for (const auto& opencl_net : m_networks) {
         const auto tuners = opencl_net->getOpenCL().get_sgemm_tuners();
 
@@ -113,7 +112,7 @@ void OpenCLScheduler<net_t>::push_input_convolution(unsigned int filter_size,
                                     m_ceil, k_ceil);
         opencl_net->push_input_convolution(
             filter_size, channels, outputs,
-            Upad, means, variances, prelu_alphas
+            Upad, means, variances
         );
     }
 }
@@ -126,11 +125,9 @@ void OpenCLScheduler<net_t>::push_residual(unsigned int filter_size,
                                            const std::vector<float>& weights_1,
                                            const std::vector<float>& means_1,
                                            const std::vector<float>& variances_1,
-                                           const std::vector<float>& prelu_alphas_1,
                                            const std::vector<float>& weights_2,
                                            const std::vector<float>& means_2,
                                            const std::vector<float>& variances_2,
-                                           const std::vector<float>& prelu_alphas_2,
                                            const std::vector<float>& se_fc1_w,
                                            const std::vector<float>& se_fc1_b,
                                            const std::vector<float>& se_fc2_w,
@@ -153,11 +150,9 @@ void OpenCLScheduler<net_t>::push_residual(unsigned int filter_size,
                                   Upad1,
                                   means_1,
                                   variances_1,
-                                  prelu_alphas_1,
                                   Upad2,
                                   means_2,
                                   variances_2,
-                                  prelu_alphas_2,
                                   se_fc1_w,
                                   se_fc1_b,
                                   se_fc2_w,

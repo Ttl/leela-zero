@@ -156,7 +156,6 @@ private:
     std::vector<std::vector<float>> m_batchnorm_gammas;
     std::vector<std::vector<float>> m_batchnorm_means;
     std::vector<std::vector<float>> m_batchnorm_stddivs;
-    std::vector<std::vector<float>> m_prelu_alphas;
 
     std::vector<std::vector<float>> m_se_fc1_w;
     std::vector<std::vector<float>> m_se_fc1_b;
@@ -168,7 +167,6 @@ private:
     std::vector<float> m_conv_pol_b;
     std::array<float, 2> m_bn_pol_w1;
     std::array<float, 2> m_bn_pol_w2;
-    std::array<float, 2> m_prelu_pol_alpha;
 
     std::array<float, (BOARD_SQUARES + 1) * BOARD_SQUARES * 2> m_ip_pol_w;
     std::array<float, BOARD_SQUARES + 1> m_ip_pol_b;
@@ -178,7 +176,6 @@ private:
     std::vector<float> m_conv_val_b;
     std::array<float, 1> m_bn_val_w1;
     std::array<float, 1> m_bn_val_w2;
-    std::array<float, 1> m_prelu_val_alpha;
 
     std::array<float, BOARD_SQUARES * 256> m_ip1_val_w;
     std::array<float, 256> m_ip1_val_b;

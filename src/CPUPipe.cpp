@@ -266,24 +266,22 @@ void batchnorm(const size_t channels,
                std::vector<float>& data,
                const float* const means,
                const float* const stddivs,
-               const float* const prelu_alphas,
                const bool relu = true,
                const float* const eltwise = nullptr)
 {
-    const auto lambda_PReLU = [](const auto val, const auto alpha) { return (val > 0.0f) ?
-                                                                    val : alpha * val; };
+    const auto lambda_ReLU = [](const auto val) { return (val > 0.0f) ?
+                                                          val : 0.0f; };
     for (auto c = size_t{0}; c < channels; ++c) {
         const auto mean = means[c];
         const auto scale_stddiv = stddivs[c];
         const auto arr = &data[c * spatial_size];
-        const auto prelu_alpha = prelu_alphas[c];
 
         if (eltwise == nullptr) {
             // Classical BN
             for (auto b = size_t{0}; b < spatial_size; b++) {
                 auto val = scale_stddiv * (arr[b] - mean);
                 if (relu) {
-                    val = lambda_PReLU(val, prelu_alpha);
+                    val = lambda_ReLU(val);
                 }
                 arr[b] = val;
             }
@@ -293,7 +291,7 @@ void batchnorm(const size_t channels,
             for (auto b = size_t{0}; b < spatial_size; b++) {
                 auto val = scale_stddiv * (arr[b] - mean) + res[b];
                 if (relu) {
-                    val = lambda_PReLU(val, prelu_alpha);
+                    val = lambda_ReLU(val);
                 }
                 arr[b] = val;
             }
@@ -346,20 +344,19 @@ void apply_se(const size_t channels,
               const std::vector<float>& input,
               const std::vector<float>& res,
               const std::vector<float>& scale,
-              std::vector<float>& output,
-              const std::vector<float>& prelu_alphas) {
+              std::vector<float>& output) {
 
-    const auto lambda_ReLU = [](const auto val, const auto alpha) { return (val > 0.0f) ?
-                                                                    val : alpha * val; };
+    const auto lambda_ReLU = [](const auto val) { return (val > 0.0f) ?
+                                                          val : 0.0f; };
 
     const auto lambda_sigmoid = [](const auto val) { return 1.0f/(1.0f + exp(-val)); };
 
-    for ( auto c = size_t{0}; c < channels; c++) {
-        auto sig_scale = lambda_sigmoid(scale[c]);
-        auto alpha = prelu_alphas[c];
-        for ( auto i = size_t{0}; i < BOARD_SQUARES; i++) {
-            output[c * BOARD_SQUARES + i] = lambda_ReLU(sig_scale * input[c * BOARD_SQUARES + i]
-                                          + res[c * BOARD_SQUARES + i], alpha);
+    for (auto c = size_t{0}; c < channels; c++) {
+        auto gamma = lambda_sigmoid(scale[c]);
+        auto beta = scale[c + channels];
+        for (auto i = size_t{0}; i < BOARD_SQUARES; i++) {
+          output[c * BOARD_SQUARES + i] = lambda_ReLU(gamma * input[c * BOARD_SQUARES+ i] +
+                                                 beta + res[c * BOARD_SQUARES + i]);
         }
     }
 }
@@ -384,8 +381,7 @@ void CPUPipe::forward(const std::vector<float>& input,
     winograd_convolve3(output_channels, input, m_conv_weights[0], V, M, conv_out);
     batchnorm<BOARD_SQUARES>(output_channels, conv_out,
                              m_batchnorm_means[0].data(),
-                             m_batchnorm_stddivs[0].data(),
-                             m_prelu_alphas[0].data());
+                             m_batchnorm_stddivs[0].data());
 
 
     // Residual tower
@@ -400,8 +396,7 @@ void CPUPipe::forward(const std::vector<float>& input,
                            m_conv_weights[i], V, M, conv_out);
         batchnorm<BOARD_SQUARES>(output_channels, conv_out,
                                  m_batchnorm_means[i].data(),
-                                 m_batchnorm_stddivs[i].data(),
-                                 m_prelu_alphas[i].data());
+                                 m_batchnorm_stddivs[i].data());
 
         std::swap(conv_in, res);
         std::swap(conv_out, conv_in);
@@ -410,7 +405,6 @@ void CPUPipe::forward(const std::vector<float>& input,
         batchnorm<BOARD_SQUARES>(output_channels, conv_out,
                                  m_batchnorm_means[i + 1].data(),
                                  m_batchnorm_stddivs[i + 1].data(),
-                                 m_prelu_alphas[i + 1].data(),
                                  false);
         std::swap(conv_out, conv_in);
 
@@ -418,9 +412,9 @@ void CPUPipe::forward(const std::vector<float>& input,
 
         auto fc_outputs = m_se_fc1_w[block].size() / output_channels;
         auto se1 = innerproduct(output_channels, fc_outputs, true, pooling, m_se_fc1_w[block], m_se_fc1_b[block]);
-        auto se2 = innerproduct(fc_outputs, output_channels, false, se1, m_se_fc2_w[block], m_se_fc2_b[block]);
+        auto se2 = innerproduct(fc_outputs, 2 * output_channels, false, se1, m_se_fc2_w[block], m_se_fc2_b[block]);
 
-        apply_se(output_channels, conv_in, res, se2, conv_out, m_prelu_alphas[i + 1]);
+        apply_se(output_channels, conv_in, res, se2, conv_out);
 
         block++;
 
@@ -435,12 +429,10 @@ void CPUPipe::push_input_convolution(unsigned int /*filter_size*/,
                                      unsigned int /*outputs*/,
                                      const std::vector<float>& weights,
                                      const std::vector<float>& means,
-                                     const std::vector<float>& variances,
-                                     const std::vector<float>& prelu_alphas) {
+                                     const std::vector<float>& variances) {
     m_conv_weights.push_back(weights);
     m_batchnorm_means.push_back(means);
     m_batchnorm_stddivs.push_back(variances);
-    m_prelu_alphas.push_back(prelu_alphas);
 }
 
 void CPUPipe::push_residual(unsigned int /*filter_size*/,
@@ -450,11 +442,9 @@ void CPUPipe::push_residual(unsigned int /*filter_size*/,
                             const std::vector<float>& weights_1,
                             const std::vector<float>& means_1,
                             const std::vector<float>& variances_1,
-                            const std::vector<float>& prelu_alphas_1,
                             const std::vector<float>& weights_2,
                             const std::vector<float>& means_2,
                             const std::vector<float>& variances_2,
-                            const std::vector<float>& prelu_alphas_2,
                             const std::vector<float>& se_fc1_w,
                             const std::vector<float>& se_fc1_b,
                             const std::vector<float>& se_fc2_w,
@@ -462,12 +452,10 @@ void CPUPipe::push_residual(unsigned int /*filter_size*/,
     m_conv_weights.push_back(weights_1);
     m_batchnorm_means.push_back(means_1);
     m_batchnorm_stddivs.push_back(variances_1);
-    m_prelu_alphas.push_back(prelu_alphas_1);
 
     m_conv_weights.push_back(weights_2);
     m_batchnorm_means.push_back(means_2);
     m_batchnorm_stddivs.push_back(variances_2);
-    m_prelu_alphas.push_back(prelu_alphas_2);
 
     m_se_fc1_w.push_back(se_fc1_w);
     m_se_fc1_b.push_back(se_fc1_b);
