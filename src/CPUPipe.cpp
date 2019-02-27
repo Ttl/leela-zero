@@ -1,6 +1,6 @@
 /*
     This file is part of Leela Zero.
-    Copyright (C) 2017-2018 Gian-Carlo Pascutto and contributors
+    Copyright (C) 2017-2019 Gian-Carlo Pascutto and contributors
 
     Leela Zero is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -14,6 +14,17 @@
 
     You should have received a copy of the GNU General Public License
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+
+    Additional permission under GNU GPL version 3 section 7
+
+    If you modify this Program, or any covered work, by linking or
+    combining it with NVIDIA Corporation's libraries from the
+    NVIDIA CUDA Toolkit and/or the NVIDIA CUDA Deep Neural
+    Network library and/or the NVIDIA TensorRT inference library
+    (or a modified version of those libraries), containing parts covered
+    by the terms of the respective license agreement, the licensors of
+    this Program grant you additional permission to convey the resulting
+    work.
 */
 
 #include "config.h"
@@ -28,12 +39,28 @@
 #include <cblas.h>
 #endif
 #ifndef USE_BLAS
-#error "No non-BLAS implementation"
+#include <Eigen/Dense>
 #endif
 
 #include "CPUPipe.h"
 #include "Network.h"
 #include "Im2Col.h"
+
+#ifndef USE_BLAS
+// Eigen helpers
+template <typename T>
+using EigenVectorMap =
+    Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, 1>>;
+template <typename T>
+using ConstEigenVectorMap =
+    Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, 1>>;
+template <typename T>
+using EigenMatrixMap =
+    Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>;
+template <typename T>
+using ConstEigenMatrixMap =
+    Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>;
+#endif
 
 void CPUPipe::initialize(int channels) {
     m_input_channels = channels;
@@ -49,12 +76,42 @@ void CPUPipe::winograd_transform_in(const std::vector<float>& in,
 
     constexpr auto Wpad = 2 + WINOGRAD_M * WTILES;
 
-    std::array<std::array<float, Wpad>, Wpad> in_pad;
-    for (auto xin = size_t{0}; xin < Wpad; xin++) {
-        for (auto yin = size_t{0}; yin < Wpad; yin++) {
-            in_pad[yin][xin] = 0.0f;
-        }
-    }
+    constexpr auto buffersize = 32;
+
+    std::array<std::array<float, Wpad>, Wpad> in_pad{0.0f};
+
+    std::array<float, buffersize * WINOGRAD_ALPHA * WINOGRAD_ALPHA> buffer;
+    auto buffer_offset = 0;
+    auto buffer_entries = 0;
+
+
+    // multiple vector [i0..i5] by Bt and produce [o0..o5]
+    // const auto Bt = std::array<float, WINOGRAD_TILE>
+    //           {1.0f,  0.0f,     -5.0f/2.0f,  0.0f,      1.0f, 0.0f,
+    //            0.0f, -SQ2,      -2.0f,       SQ2/2.0f,  1.0f, 0.0f,
+    //            0.0f,  SQ2,      -2.0f,      -SQ2/2.0f,  1.0f, 0.0f,
+    //            0.0f, -SQ2/2.0f, -1.0f/2.0f,  SQ2,       1.0f, 0.0f,
+    //            0.0f,  SQ2/2.0f, -1.0f/2.0f, -SQ2,       1.0f, 0.0f,
+    //            0.0f,  1.0f,      0.0f,      -5.0f/2.0f, 0.0f, 1.0f};
+    auto multiply_bt = [](
+        float & o0, float & o1, float & o2, float & o3, float & o4, float & o5,
+        float i0, float i1, float i2, float i3, float i4, float i5
+    ) {
+        auto i3m1 = i1 * -SQ2 + i3 * (SQ2 / 2.0f);
+        auto i4m2 = i2 * -2.0f + i4 * 1.0f;
+
+        o0 = i0 + i2 * (-5.0f/2.0f) + i4;
+        o1 = i3m1 + i4m2;
+        o2 = -i3m1 + i4m2;
+
+        auto i3m1_2 = i3 * (SQ2) + i1 * (-SQ2/2.0f);
+        auto i4m2_2 = i2 * (-1.0f/2.0f) + i4;
+
+        o3 = i3m1_2 + i4m2_2;
+        o4 = -i3m1_2 + i4m2_2;
+
+        o5 = i1 + i3 * (-5.0f/2.0f) + i5;
+    };
 
     for (auto ch = 0; ch < C; ch++) {
         for (auto yin = 0; yin < H; yin++) {
@@ -67,46 +124,64 @@ void CPUPipe::winograd_transform_in(const std::vector<float>& in,
             const auto yin = WINOGRAD_M * block_y;
             for (auto block_x = 0; block_x < WTILES; block_x++) {
                 const auto xin = WINOGRAD_M * block_x;
-
-                using WinogradTile =
-                    std::array<std::array<float, WINOGRAD_ALPHA>, WINOGRAD_ALPHA>;
-                WinogradTile T1, T2;
-
-                const auto Bt = std::array<float, WINOGRAD_TILE>
-                           {1.0f,  0.0f,     -5.0f/2.0f,  0.0f,      1.0f, 0.0f,
-                            0.0f, -SQ2,      -2.0f,       SQ2/2.0f,  1.0f, 0.0f,
-                            0.0f,  SQ2,      -2.0f,      -SQ2/2.0f,  1.0f, 0.0f,
-                            0.0f, -SQ2/2.0f, -1.0f/2.0f,  SQ2,       1.0f, 0.0f,
-                            0.0f,  SQ2/2.0f, -1.0f/2.0f, -SQ2,       1.0f, 0.0f,
-                            0.0f,  1.0f,      0.0f,      -5.0f/2.0f, 0.0f, 1.0f};
+#define DECL_T1(XX) \
+                float T1_##XX##_0, T1_##XX##_1, T1_##XX##_2, T1_##XX##_3, T1_##XX##_4, T1_##XX##_5;
+                DECL_T1(0)
+                DECL_T1(1)
+                DECL_T1(2)
+                DECL_T1(3)
+                DECL_T1(4)
+                DECL_T1(5)
 
                 // Calculates transpose(B).x.B
-                for (auto i = 0; i < WINOGRAD_ALPHA; i++){
-                    for (auto j = 0; j < WINOGRAD_ALPHA; j++) {
-                        auto acc = 0.0f;
-                        for (auto k = 0; k < WINOGRAD_ALPHA; k++) {
-                            acc += Bt[i * WINOGRAD_ALPHA + k] * \
-                                   in_pad[yin + k][xin + j];
-                        }
-                        T1[i][j] = acc;
-                    }
-                }
+#define MULTIPLY_BT(XX) \
+                multiply_bt( \
+                    T1_0_##XX, T1_1_##XX, T1_2_##XX, T1_3_##XX, T1_4_##XX, T1_5_##XX, \
+                    in_pad[yin + 0][xin + XX], \
+                    in_pad[yin + 1][xin + XX], \
+                    in_pad[yin + 2][xin + XX], \
+                    in_pad[yin + 3][xin + XX], \
+                    in_pad[yin + 4][xin + XX], \
+                    in_pad[yin + 5][xin + XX] \
+                );
+                MULTIPLY_BT(0)
+                MULTIPLY_BT(1)
+                MULTIPLY_BT(2)
+                MULTIPLY_BT(3)
+                MULTIPLY_BT(4)
+                MULTIPLY_BT(5)
 
-                for (auto i = 0; i < WINOGRAD_ALPHA; i++){
-                    for (auto j = 0; j < WINOGRAD_ALPHA; j++) {
-                        auto acc = 0.0f;
-                        for (auto k = 0; k < WINOGRAD_ALPHA; k++) {
-                            acc += T1[i][k] * Bt[j * WINOGRAD_ALPHA + k];
-                        }
-                        T2[i][j] = acc;
-                    }
-                }
+#define MULTIPLY_B(XX) \
+                multiply_bt( \
+                    buffer[buffersize * (XX * WINOGRAD_ALPHA + 0) + buffer_entries], \
+                    buffer[buffersize * (XX * WINOGRAD_ALPHA + 1) + buffer_entries], \
+                    buffer[buffersize * (XX * WINOGRAD_ALPHA + 2) + buffer_entries], \
+                    buffer[buffersize * (XX * WINOGRAD_ALPHA + 3) + buffer_entries], \
+                    buffer[buffersize * (XX * WINOGRAD_ALPHA + 4) + buffer_entries], \
+                    buffer[buffersize * (XX * WINOGRAD_ALPHA + 5) + buffer_entries], \
+                    T1_##XX##_0, T1_##XX##_1, T1_##XX##_2, T1_##XX##_3, T1_##XX##_4, T1_##XX##_5 \
+                );
+                MULTIPLY_B(0)
+                MULTIPLY_B(1)
+                MULTIPLY_B(2)
+                MULTIPLY_B(3)
+                MULTIPLY_B(4)
+                MULTIPLY_B(5)
 
-                const auto offset = ch * P + block_y * WTILES + block_x;
-                for (auto i = 0; i < WINOGRAD_ALPHA; i++) {
-                    for (auto j = 0; j < WINOGRAD_ALPHA; j++) {
-                        V[(i * WINOGRAD_ALPHA + j)*C*P + offset] = T2[i][j];
+                if (buffer_entries == 0) {
+                    buffer_offset = ch * P + block_y * WTILES + block_x;
+                }
+                buffer_entries++;
+
+                if (buffer_entries >= buffersize ||
+                    (ch == C - 1 && block_x == WTILES - 1 && block_y == WTILES - 1)) {
+
+                    for (auto i = 0; i < WINOGRAD_ALPHA * WINOGRAD_ALPHA; i++) {
+                        for (auto entry = 0; entry < buffer_entries; entry++) {
+                            V[i*C*P + buffer_offset + entry] = buffer[i*buffersize + entry];
+                        }
                     }
+                    buffer_entries = 0;
                 }
             }
         }
@@ -123,7 +198,7 @@ void CPUPipe::winograd_sgemm(const std::vector<float>& U,
         const auto offset_u = b * K * C;
         const auto offset_v = b * C * P;
         const auto offset_m = b * K * P;
-
+#ifdef USE_BLAS
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                     K, P, C,
                     1.0f,
@@ -131,6 +206,12 @@ void CPUPipe::winograd_sgemm(const std::vector<float>& U,
                     &V[offset_v], P,
                     0.0f,
                     &M[offset_m], P);
+#else
+        auto C_mat = EigenMatrixMap<float>(M.data() + offset_m, P, K);
+        C_mat.noalias() =
+           ConstEigenMatrixMap<float>(V.data() + offset_v, P, C)
+            * ConstEigenMatrixMap<float>(U.data() + offset_u, K, C).transpose();
+#endif
     }
 }
 
@@ -141,6 +222,27 @@ void CPUPipe::winograd_transform_out(const std::vector<float>& M,
     constexpr auto H = BOARD_SIZE;
     constexpr auto WTILES = WINOGRAD_WTILES;
     constexpr auto P = WINOGRAD_P;
+
+    // multiple vector [i0..i5] by At and produce [o0..o3]
+    // const auto At = std::array<float, WINOGRAD_ALPHA * WINOGRAD_M>
+    //       {1.0f, 1.0f,      1.0f,       1.0f,      1.0f,     0.0f,
+    //        0.0f, SQ2/2.0f, -SQ2/2.0f,   SQ2,      -SQ2,      0.0f,
+    //        0.0f, 1.0f/2.0f, 1.0f/2.0f,  2.0f,      2.0f,     0.0f,
+    //        0.0f, SQ2/4.0f, -SQ2/4.0f,   2.0f*SQ2, -2.0f*SQ2, 1.0f};
+    auto multiply_at = [](
+        float & o0, float & o1, float & o2, float & o3,
+        float i0, float i1, float i2, float i3, float i4, float i5
+    ) {
+        auto t1p2 = (i1 + i2) * (1.0f / 2.0f);
+        auto t1m2 = (i1 - i2) * (SQ2/4.0f);
+        auto t3p4 = i3 + i4;
+        auto t3m4 = (i3 - i4) * (SQ2);
+
+        o0 = i0 + t1p2 + t1p2 + t3p4;
+        o1 = t1m2 + t1m2 + t3m4;
+        o2 = t1p2 + t3p4 + t3p4;
+        o3 = t1m2 + t3m4 + t3m4 + i5;
+    };
 
     for (auto k = 0; k < K; k++) {
         for (auto block_x = 0; block_x < WTILES; block_x++) {
@@ -158,35 +260,22 @@ void CPUPipe::winograd_transform_out(const std::vector<float>& M,
                             M[(xi*WINOGRAD_ALPHA + nu)*K*P + k*P + b];
                     }
                 }
-
-                const auto At = std::array<float, WINOGRAD_ALPHA * WINOGRAD_M>
-                      {1.0f, 1.0f,      1.0f,       1.0f,      1.0f,     0.0f,
-                       0.0f, SQ2/2.0f, -SQ2/2.0f,   SQ2,      -SQ2,      0.0f,
-                       0.0f, 1.0f/2.0f, 1.0f/2.0f,  2.0f,      2.0f,     0.0f,
-                       0.0f, SQ2/4.0f, -SQ2/4.0f,   2.0f*SQ2, -2.0f*SQ2, 1.0f};
-
                 std::array<std::array<float, WINOGRAD_ALPHA>, WINOGRAD_M> temp;
                 std::array<std::array<float, WINOGRAD_M>, WINOGRAD_M> o;
 
                 // Calculates transpose(A).temp_m.A
-                for (auto i = 0; i < WINOGRAD_M; i++){
-                    for (auto j = 0; j < WINOGRAD_ALPHA; j++) {
-                        auto acc = 0.0f;
-                        for (auto q = 0; q < WINOGRAD_ALPHA; q++) {
-                            acc += At[i * WINOGRAD_ALPHA + q] * temp_m[q][j];
-                        }
-                        temp[i][j] = acc;
-                    }
+                for (auto j = 0; j < WINOGRAD_ALPHA; j++){
+                    multiply_at(
+                        temp[0][j], temp[1][j], temp[2][j], temp[3][j],
+                        temp_m[0][j], temp_m[1][j], temp_m[2][j], temp_m[3][j], temp_m[4][j], temp_m[5][j]
+                    );
                 }
 
                 for (auto i = 0; i < WINOGRAD_M; i++){
-                    for (auto j = 0; j < WINOGRAD_M; j++) {
-                        auto acc = 0.0f;
-                        for (auto q = 0; q < WINOGRAD_ALPHA; q++) {
-                            acc += temp[i][q] * At[j * WINOGRAD_ALPHA + q];
-                        }
-                        o[i][j] = acc;
-                    }
+                    multiply_at(
+                        o[i][0], o[i][1], o[i][2], o[i][3],
+                        temp[i][0], temp[i][1], temp[i][2], temp[i][3], temp[i][4], temp[i][5]
+                    );
                 }
 
                 const auto y_ind = k * H * W + y * W + x;
@@ -226,11 +315,11 @@ void convolve(const size_t outputs,
     // The size of the board is defined at compile time
     constexpr unsigned int width = BOARD_SIZE;
     constexpr unsigned int height = BOARD_SIZE;
-    constexpr auto board_squares = width * height;
+    constexpr auto num_intersections = width * height;
     constexpr auto filter_len = filter_size * filter_size;
     const auto input_channels = weights.size() / (biases.size() * filter_len);
     const auto filter_dim = filter_len * input_channels;
-    assert(outputs * board_squares == output.size());
+    assert(outputs * num_intersections == output.size());
 
     std::vector<float> col(filter_dim * width * height);
     im2col<filter_size>(input_channels, input, col);
@@ -246,17 +335,24 @@ void convolve(const size_t outputs,
     // passing a matrix A[m][n], the value should be m.
     //    cblas_sgemm(CblasRowMajor, TransA, TransB, M, N, K, alpha, A, lda, B,
     //                ldb, beta, C, N);
-
+#ifdef USE_BLAS
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 // M        N            K
-                outputs, board_squares, filter_dim,
+                outputs, num_intersections, filter_dim,
                 1.0f, &weights[0], filter_dim,
-                &col[0], board_squares,
-                0.0f, &output[0], board_squares);
+                &col[0], num_intersections,
+                0.0f, &output[0], num_intersections);
+#else
+    auto C_mat = EigenMatrixMap<float>(output.data(),
+                                       num_intersections, outputs);
+    C_mat.noalias() =
+        ConstEigenMatrixMap<float>(col.data(), num_intersections, filter_dim)
+        * ConstEigenMatrixMap<float>(weights.data(), filter_dim, outputs);
+#endif
 
     for (unsigned int o = 0; o < outputs; o++) {
-        for (unsigned int b = 0; b < board_squares; b++) {
-            output[(o * board_squares) + b] += biases[o];
+        for (unsigned int b = 0; b < num_intersections; b++) {
+            output[(o * num_intersections) + b] += biases[o];
         }
     }
 }
@@ -267,8 +363,7 @@ void batchnorm(const size_t channels,
                const float* const means,
                const float* const stddivs,
                const bool relu = true,
-               const float* const eltwise = nullptr)
-{
+               const float* const eltwise = nullptr) {
     const auto lambda_ReLU = [](const auto val) { return (val > 0.0f) ?
                                                           val : 0.0f; };
     for (auto c = size_t{0}; c < channels; ++c) {
@@ -299,7 +394,8 @@ void batchnorm(const size_t channels,
     }
 }
 
-std::vector<float> innerproduct(const size_t inputs,
+
+std::vector<float> innerproduct_(const size_t inputs,
                                 const size_t outputs,
                                 const bool ReLU,
                                 const std::vector<float>& input,
@@ -307,13 +403,21 @@ std::vector<float> innerproduct(const size_t inputs,
                                 const std::vector<float>& biases) {
     std::vector<float> output(outputs);
 
+#ifdef USE_BLAS
     cblas_sgemv(CblasRowMajor, CblasNoTrans,
                 // M     K
                 outputs, inputs,
                 1.0f, &weights[0], inputs,
                 &input[0], 1,
                 0.0f, &output[0], 1);
-
+#else
+    EigenVectorMap<float> y(output.data(), outputs);
+    y.noalias() =
+        ConstEigenMatrixMap<float>(weights.data(),
+                                   inputs,
+                                   outputs).transpose()
+        * ConstEigenVectorMap<float>(input.data(), inputs);
+#endif
     const auto lambda_ReLU = [](const auto val) { return (val > 0.0f) ?
                                                           val : 0.0f; };
     for (unsigned int o = 0; o < outputs; o++) {
@@ -333,10 +437,10 @@ void global_avg_pooling(const size_t channels,
 
     for ( auto c = size_t{0}; c < channels; c++) {
         auto acc = 0.0f;
-        for ( auto i = size_t{0}; i < BOARD_SQUARES; i++) {
-            acc += input[c * BOARD_SQUARES + i];
+        for ( auto i = size_t{0}; i < NUM_INTERSECTIONS; i++) {
+            acc += input[c * NUM_INTERSECTIONS + i];
         }
-        output[c] = acc/BOARD_SQUARES;
+        output[c] = acc/NUM_INTERSECTIONS;
     }
 }
 
@@ -354,9 +458,9 @@ void apply_se(const size_t channels,
     for (auto c = size_t{0}; c < channels; c++) {
         auto gamma = lambda_sigmoid(scale[c]);
         auto beta = scale[c + channels];
-        for (auto i = size_t{0}; i < BOARD_SQUARES; i++) {
-          output[c * BOARD_SQUARES + i] = lambda_ReLU(gamma * input[c * BOARD_SQUARES+ i] +
-                                                 beta + res[c * BOARD_SQUARES + i]);
+        for (auto i = size_t{0}; i < NUM_INTERSECTIONS; i++) {
+          output[c * NUM_INTERSECTIONS + i] = lambda_ReLU(gamma * input[c * NUM_INTERSECTIONS+ i] +
+                                                 beta + res[c * NUM_INTERSECTIONS + i]);
         }
     }
 }
@@ -373,111 +477,66 @@ void CPUPipe::forward(const std::vector<float>& input,
     // might be bigger when the network has very few filters
     const auto input_channels = std::max(static_cast<size_t>(output_channels),
                                          static_cast<size_t>(Network::INPUT_CHANNELS));
-    auto conv_out = std::vector<float>(output_channels * BOARD_SQUARES);
+    auto conv_out = std::vector<float>(output_channels * NUM_INTERSECTIONS);
 
     auto V = std::vector<float>(WINOGRAD_TILE * input_channels * P);
     auto M = std::vector<float>(WINOGRAD_TILE * output_channels * P);
 
-    winograd_convolve3(output_channels, input, m_conv_weights[0], V, M, conv_out);
-    batchnorm<BOARD_SQUARES>(output_channels, conv_out,
-                             m_batchnorm_means[0].data(),
-                             m_batchnorm_stddivs[0].data());
+    winograd_convolve3(output_channels, input, m_weights->m_conv_weights[0], V, M, conv_out);
+    batchnorm<NUM_INTERSECTIONS>(output_channels, conv_out,
+                                 m_weights->m_batchnorm_means[0].data(),
+                                 m_weights->m_batchnorm_stddevs[0].data());
 
 
     // Residual tower
     auto pooling = std::vector<float>(output_channels);
-    auto conv_in = std::vector<float>(output_channels * BOARD_SQUARES);
-    auto res = std::vector<float>(output_channels * BOARD_SQUARES);
+    auto conv_in = std::vector<float>(output_channels * NUM_INTERSECTIONS);
+    auto res = std::vector<float>(output_channels * NUM_INTERSECTIONS);
     auto block = 0;
-    for (auto i = size_t{1}; i < m_conv_weights.size(); i += 2) {
-        auto output_channels = m_batchnorm_stddivs[i].size();
+    for (auto i = size_t{1}; i < m_weights->m_conv_weights.size(); i += 2) {
+        auto output_channels = m_input_channels;
         std::swap(conv_out, conv_in);
         winograd_convolve3(output_channels, conv_in,
-                           m_conv_weights[i], V, M, conv_out);
-        batchnorm<BOARD_SQUARES>(output_channels, conv_out,
-                                 m_batchnorm_means[i].data(),
-                                 m_batchnorm_stddivs[i].data());
+                           m_weights->m_conv_weights[i], V, M, conv_out);
+        batchnorm<NUM_INTERSECTIONS>(output_channels, conv_out,
+                                     m_weights->m_batchnorm_means[i].data(),
+                                     m_weights->m_batchnorm_stddevs[i].data());
 
         std::swap(conv_in, res);
         std::swap(conv_out, conv_in);
         winograd_convolve3(output_channels, conv_in,
-                           m_conv_weights[i + 1], V, M, conv_out);
-        batchnorm<BOARD_SQUARES>(output_channels, conv_out,
-                                 m_batchnorm_means[i + 1].data(),
-                                 m_batchnorm_stddivs[i + 1].data(),
-                                 false);
+                           m_weights->m_conv_weights[i + 1], V, M, conv_out);
+        batchnorm<NUM_INTERSECTIONS>(output_channels, conv_out,
+                                     m_weights->m_batchnorm_means[i + 1].data(),
+                                     m_weights->m_batchnorm_stddevs[i + 1].data(),
+                                     false);
+
         std::swap(conv_out, conv_in);
 
         global_avg_pooling(output_channels, conv_in, pooling);
 
-        auto fc_outputs = m_se_fc1_w[block].size() / output_channels;
-        auto se1 = innerproduct(output_channels, fc_outputs, true, pooling, m_se_fc1_w[block], m_se_fc1_b[block]);
-        auto se2 = innerproduct(fc_outputs, 2 * output_channels, false, se1, m_se_fc2_w[block], m_se_fc2_b[block]);
+        auto fc_outputs = m_weights->m_se_fc1_w[block].size() / output_channels;
+        auto se1 = innerproduct_(output_channels, fc_outputs, true, pooling, m_weights->m_se_fc1_w[block], m_weights->m_se_fc1_b[block]);
+        auto se2 = innerproduct_(fc_outputs, 2 * output_channels, false, se1, m_weights->m_se_fc2_w[block], m_weights->m_se_fc2_b[block]);
 
         apply_se(output_channels, conv_in, res, se2, conv_out);
 
         block++;
-
     }
     convolve<1>(Network::OUTPUTS_POLICY, conv_out, m_conv_pol_w, m_conv_pol_b, output_pol);
     convolve<1>(Network::OUTPUTS_VALUE, conv_out, m_conv_val_w, m_conv_val_b, output_val);
 }
 
+void CPUPipe::push_weights(unsigned int /*filter_size*/,
+                           unsigned int /*channels*/,
+                           unsigned int outputs,
+                           std::shared_ptr<const ForwardPipeWeights> weights) {
 
-void CPUPipe::push_input_convolution(unsigned int /*filter_size*/,
-                                     unsigned int /*channels*/,
-                                     unsigned int /*outputs*/,
-                                     const std::vector<float>& weights,
-                                     const std::vector<float>& means,
-                                     const std::vector<float>& variances) {
-    m_conv_weights.push_back(weights);
-    m_batchnorm_means.push_back(means);
-    m_batchnorm_stddivs.push_back(variances);
-}
+    m_weights = weights;
 
-void CPUPipe::push_residual(unsigned int /*filter_size*/,
-                            unsigned int /*channels*/,
-                            unsigned int /*outputs*/,
-                            unsigned int /*se_fc_outputs*/,
-                            const std::vector<float>& weights_1,
-                            const std::vector<float>& means_1,
-                            const std::vector<float>& variances_1,
-                            const std::vector<float>& weights_2,
-                            const std::vector<float>& means_2,
-                            const std::vector<float>& variances_2,
-                            const std::vector<float>& se_fc1_w,
-                            const std::vector<float>& se_fc1_b,
-                            const std::vector<float>& se_fc2_w,
-                            const std::vector<float>& se_fc2_b) {
-    m_conv_weights.push_back(weights_1);
-    m_batchnorm_means.push_back(means_1);
-    m_batchnorm_stddivs.push_back(variances_1);
-
-    m_conv_weights.push_back(weights_2);
-    m_batchnorm_means.push_back(means_2);
-    m_batchnorm_stddivs.push_back(variances_2);
-
-    m_se_fc1_w.push_back(se_fc1_w);
-    m_se_fc1_b.push_back(se_fc1_b);
-    m_se_fc2_w.push_back(se_fc2_w);
-    m_se_fc2_b.push_back(se_fc2_b);
-}
-
-void CPUPipe::push_convolve(unsigned int filter_size,
-                            unsigned int channels,
-                            unsigned int outputs,
-                            const std::vector<float>& weights) {
-    // currently we can only support the final convolve stages
-    (void)filter_size;
-    assert(filter_size == 1);
-
-    if (outputs == Network::OUTPUTS_POLICY) {
-        m_conv_pol_w = weights;
-        m_conv_pol_b.resize(m_conv_pol_w.size() / channels, 0.0f);
-    } else if (outputs == Network::OUTPUTS_VALUE) {
-        m_conv_val_w = weights;
-        m_conv_val_b.resize(m_conv_val_w.size() / channels, 0.0f);
-    } else {
-        assert(false);
-    }
+    // Output head convolutions
+    m_conv_pol_w = weights->m_conv_pol_w;
+    m_conv_pol_b.resize(m_conv_pol_w.size() / outputs, 0.0f);
+    m_conv_val_w = weights->m_conv_val_w;
+    m_conv_val_b.resize(m_conv_val_w.size() / outputs, 0.0f);
 }

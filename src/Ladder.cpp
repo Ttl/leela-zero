@@ -69,7 +69,7 @@ bool Ladder::ladder_capture(const FastState &state, int vertex, int group, int d
         // Check if there are nearby groups with 2 liberties
         for (int d = 0; d < 4; d++) {
             int n_vtx = board.get_square_neighbor(vertex, d);
-            int n = board.get_square(n_vtx);
+            int n = board.get_state(n_vtx);
             if ((n == escape_player) && (board.get_liberties(n_vtx) == 2)) {
                 auto parent = board.m_parent[n_vtx];
                 if (std::find(groups_in_ladder.begin(), groups_in_ladder.end(), parent) == groups_in_ladder.end()) {
@@ -93,13 +93,13 @@ bool Ladder::ladder_capture(const FastState &state, int vertex, int group, int d
             for (int d = 0; d < 4; d++) {
                 int stone = newpos + board_copy.m_dirs[d];
                 // If the surrounding stones are in atari capture fails
-                if (board_copy.m_square[stone] == capture_player) {
+                if (board_copy.m_state[stone] == capture_player) {
                     if (board_copy.get_liberties(stone) == 1) {
                         return false;
                     }
                 }
                 // Possible move to escape
-                if (board_copy.m_square[stone] == FastBoard::EMPTY) {
+                if (board_copy.m_state[stone] == FastBoard::EMPTY) {
                     escape = stone;
                 }
             }
@@ -136,7 +136,7 @@ bool Ladder::ladder_escape(const FastState &state, const int vertex, int group, 
         // Check if there are nearby groups with 1 liberties
         for (int d = 0; d < 4; d++) {
             int n_vtx = board.get_square_neighbor(vertex, d);
-            int n = board.get_square(n_vtx);
+            int n = board.get_state(n_vtx);
             if ((n == escape_player) && (board.get_liberties(n_vtx) == 1)) {
                 auto parent = board.m_parent[n_vtx];
                 if (std::find(groups_in_ladder.begin(), groups_in_ladder.end(), parent) == groups_in_ladder.end()) {
@@ -169,7 +169,7 @@ bool Ladder::ladder_escape(const FastState &state, const int vertex, int group, 
         do {
             for (int d = 0; d < 4; d++) {
                 int empty = newpos + board_copy.m_dirs[d];
-                if (board_copy.m_square[empty] == FastBoard::EMPTY) {
+                if (board_copy.m_state[empty] == FastBoard::EMPTY) {
                     if (ladder_capture(*state_copy, empty, group, depth + 1)) {
                         // Got captured
                         return false;

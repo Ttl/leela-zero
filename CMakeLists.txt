@@ -1,6 +1,6 @@
 # This file is part of Leela Zero.
 # Copyright (C) 2017 Marco Calignano
-# Copyright (C) 2017-2018 Gian-Carlo Pascutto and contributors
+# Copyright (C) 2017-2019 Gian-Carlo Pascutto and contributors
 # Leela Zero is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -15,6 +15,7 @@
 cmake_minimum_required(VERSION 3.1)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+include(GNUInstallDirs)
 
 project(leelaz)
 add_subdirectory(gtest EXCLUDE_FROM_ALL) # We don't want to install gtest, exclude it from `all`
@@ -22,7 +23,7 @@ add_subdirectory(gtest EXCLUDE_FROM_ALL) # We don't want to install gtest, exclu
 # Required Packages
 set(Boost_MIN_VERSION "1.58.0")
 set(Boost_USE_MULTITHREADED ON)
-find_package(Boost 1.58.0 REQUIRED program_options)
+find_package(Boost 1.58.0 REQUIRED program_options filesystem)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(OpenCL REQUIRED)
@@ -32,14 +33,20 @@ find_package(OpenCL REQUIRED)
 if(NOT APPLE)
   set(BLA_VENDOR OpenBLAS)
 endif()
-find_package(BLAS REQUIRED)
-find_path(BLAS_INCLUDE_DIRS openblas_config.h
-  /usr/include
-  /usr/local/include
-  /usr/include/openblas
-  /opt/OpenBLAS/include
-  /usr/include/x86_64-linux-gnu
-  $ENV{BLAS_HOME}/include)
+if(USE_BLAS)
+  message(STATUS "Looking for system BLAS/OpenBLAS library.")
+  find_package(BLAS REQUIRED)
+  find_path(BLAS_INCLUDE_DIRS openblas_config.h
+    /usr/include
+    /usr/local/include
+    /usr/include/openblas
+    /opt/OpenBLAS/include
+    /usr/include/x86_64-linux-gnu
+    $ENV{BLAS_HOME}/include)
+    add_definitions(-DUSE_BLAS)
+else()
+message(STATUS "Using built-in matrix library.")
+endif()
 find_package(Qt5Core)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -79,7 +86,7 @@ if(USE_HALF)
   add_definitions(-DUSE_HALF)
 endif()
 
-set(IncludePath "${CMAKE_CURRENT_SOURCE_DIR}/src")
+set(IncludePath "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/src/Eigen")
 set(SrcPath "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 include_directories(${IncludePath})
@@ -108,7 +115,7 @@ target_link_libraries(leelaz ${BLAS_LIBRARIES})
 target_link_libraries(leelaz ${OpenCL_LIBRARIES})
 target_link_libraries(leelaz ${ZLIB_LIBRARIES})
 target_link_libraries(leelaz ${CMAKE_THREAD_LIBS_INIT})
-install(TARGETS leelaz DESTINATION bin)
+install(TARGETS leelaz DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if(Qt5Core_FOUND)
     if(NOT Qt5Core_VERSION VERSION_LESS "5.3.0")

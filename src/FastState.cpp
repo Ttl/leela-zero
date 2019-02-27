@@ -1,6 +1,6 @@
 /*
     This file is part of Leela Zero.
-    Copyright (C) 2017-2018 Gian-Carlo Pascutto and contributors
+    Copyright (C) 2017-2019 Gian-Carlo Pascutto and contributors
 
     Leela Zero is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -14,6 +14,17 @@
 
     You should have received a copy of the GNU General Public License
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+
+    Additional permission under GNU GPL version 3 section 7
+
+    If you modify this Program, or any covered work, by linking or
+    combining it with NVIDIA Corporation's libraries from the
+    NVIDIA CUDA Toolkit and/or the NVIDIA CUDA Deep Neural
+    Network library and/or the NVIDIA TensorRT inference library
+    (or a modified version of those libraries), containing parts covered
+    by the terms of the respective license agreement, the licensors of
+    this Program grant you additional permission to convey the resulting
+    work.
 */
 
 #include "config.h"
@@ -26,6 +37,7 @@
 #include "FastBoard.h"
 #include "Utils.h"
 #include "Zobrist.h"
+#include "GTP.h"
 
 #include "Ladder.h"
 
@@ -49,7 +61,7 @@ void FastState::set_komi(float komi) {
     m_komi = komi;
 }
 
-void FastState::reset_game(void) {
+void FastState::reset_game() {
     reset_board();
 
     m_movenum = 0;
@@ -59,16 +71,17 @@ void FastState::reset_game(void) {
     m_lastmove = FastBoard::NO_VERTEX;
 }
 
-void FastState::reset_board(void) {
+void FastState::reset_board() {
     board.reset_board(board.get_boardsize());
 }
 
 bool FastState::is_move_legal(int color, int vertex) const {
-    return vertex == FastBoard::PASS ||
-           vertex == FastBoard::RESIGN ||
-           (vertex != m_komove &&
-                board.get_square(vertex) == FastBoard::EMPTY &&
-                !board.is_suicide(vertex, color));
+    return !cfg_analyze_tags.is_to_avoid(color, vertex, m_movenum) && (
+              vertex == FastBoard::PASS ||
+                 vertex == FastBoard::RESIGN ||
+                 (vertex != m_komove &&
+                      board.get_state(vertex) == FastBoard::EMPTY &&
+                      !board.is_suicide(vertex, color)));
 }
 
 void FastState::play_move(int vertex) {
@@ -106,7 +119,7 @@ size_t FastState::get_movenum() const {
     return m_movenum;
 }
 
-int FastState::get_last_move(void) const {
+int FastState::get_last_move() const {
     return m_lastmove;
 }
 

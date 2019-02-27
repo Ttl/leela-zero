@@ -1,6 +1,6 @@
 /*
     This file is part of Leela Zero.
-    Copyright (C) 2018 Junhee Yoo and contributors
+    Copyright (C) 2018-2019 Junhee Yoo and contributors
 
     Leela Zero is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -14,6 +14,17 @@
 
     You should have received a copy of the GNU General Public License
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+
+    Additional permission under GNU GPL version 3 section 7
+
+    If you modify this Program, or any covered work, by linking or
+    combining it with NVIDIA Corporation's libraries from the
+    NVIDIA CUDA Toolkit and/or the NVIDIA CUDA Deep Neural
+    Network library and/or the NVIDIA TensorRT inference library
+    (or a modified version of those libraries), containing parts covered
+    by the terms of the respective license agreement, the licensors of
+    this Program grant you additional permission to convey the resulting
+    work.
 */
 
 #ifndef CPUPIPE_H_INCLUDED
@@ -32,34 +43,10 @@ public:
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val);
 
-    virtual void push_input_convolution(unsigned int filter_size,
-                                        unsigned int channels,
-                                        unsigned int outputs,
-                                        const std::vector<float>& weights,
-                                        const std::vector<float>& means,
-                                        const std::vector<float>& variances);
-
-    virtual void push_residual(unsigned int filter_size,
-                               unsigned int channels,
-                               unsigned int outputs,
-                               unsigned int se_fc_outputs,
-                               const std::vector<float>& weights_1,
-                               const std::vector<float>& means_1,
-                               const std::vector<float>& variances_1,
-                               const std::vector<float>& weights_2,
-                               const std::vector<float>& means_2,
-                               const std::vector<float>& variances_2,
-                               const std::vector<float>& se_fc1_w,
-                               const std::vector<float>& se_fc1_b,
-                               const std::vector<float>& se_fc2_w,
-                               const std::vector<float>& se_fc2_b);
-
-    virtual void push_convolve(unsigned int filter_size,
-                               unsigned int channels,
-                               unsigned int outputs,
-                               const std::vector<float>& weights);
-
-
+    virtual void push_weights(unsigned int filter_size,
+                              unsigned int channels,
+                              unsigned int outputs,
+                              std::shared_ptr<const ForwardPipeWeights> weights);
 private:
     void winograd_transform_in(const std::vector<float>& in,
                                std::vector<float>& V,
@@ -85,15 +72,8 @@ private:
     int m_input_channels;
 
     // Input + residual block tower
-    std::vector<std::vector<float>> m_conv_weights;
-    std::vector<std::vector<float>> m_batchnorm_means;
-    std::vector<std::vector<float>> m_batchnorm_stddivs;
-    std::vector<std::vector<float>> m_prelu_alphas;
 
-    std::vector<std::vector<float>> m_se_fc1_w;
-    std::vector<std::vector<float>> m_se_fc1_b;
-    std::vector<std::vector<float>> m_se_fc2_w;
-    std::vector<std::vector<float>> m_se_fc2_b;
+    std::shared_ptr<const ForwardPipeWeights> m_weights;
 
     std::vector<float> m_conv_pol_w;
     std::vector<float> m_conv_val_w;

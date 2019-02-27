@@ -38,7 +38,7 @@ R"(
             real beta = vload_net_t(c + batch * channels + channels, fc_out);
 
             for ( int i = 0; i < BOARD_SIZE; i++) {
-                const int idx = c * BOARD_SQUARES + i * BOARD_SIZE + col;
+                const int idx = c * NUM_INTERSECTIONS + i * BOARD_SIZE + col;
                 const real in = vload_net_t(idx, input);
                 const real res = vload_net_t(idx, residual);
 

@@ -16,42 +16,20 @@
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+
+// This kernel simply tests if the host can compile a wmma insturction.
+// Not intended to be run at all.
+
 // Enables loading of this file using the C++ pre-processor's #include (C++11 standard raw string
 // literal). Comment-out this line for syntax-highlighting when developing.
-
 R"(
-    __kernel void global_avg_pooling(
-                   const int channels,
-                   __global const net_t * restrict in,
-                   __global net_t * restrict out) {
 
-        const int col = get_global_id(0);  // column
-        const int c = get_global_id(1);  // channel
+__kernel void tensorcore_test(__global int * ptr) {
+    asm(
+        ".reg .b32 a0, a1, a2, a3, a4, a5, a6, a7;\n"
+        "wmma.load.a.sync.aligned.m16n16k16.shared.row.f16 {a0,a1,a2,a3,a4,a5,a6,a7}, [%0];\n" : : "l"(ptr)
+    );
+}
 
-        const int lid = get_local_id(0);
-
-        __local real row_acc[BOARD_SIZE];
-
-        if (c < channels && col < BOARD_SIZE) {
-
-            real acc = ZERO;
-
-            for ( int i = 0; i < BOARD_SIZE; i++) {
-                acc += vload_net_t(c * NUM_INTERSECTIONS + col * BOARD_SIZE + i, in);
-            }
-            row_acc[lid] = acc;
-        }
-
-        barrier(CLK_LOCAL_MEM_FENCE);
-
-        if (lid == 0) {
-            real acc = ZERO;
-            for ( int i = 0; i < BOARD_SIZE; i++) {
-                acc += row_acc[i];
-            }
-            acc = acc/NUM_INTERSECTIONS;
-            vstore_net_t(acc, c, out);
-        }
-    }
 // End of the C++11 raw string literal
 )"

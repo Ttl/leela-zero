@@ -1,6 +1,6 @@
 /*
     This file is part of Leela Zero.
-    Copyright (C) 2017-2018 Gian-Carlo Pascutto and contributors
+    Copyright (C) 2017-2019 Gian-Carlo Pascutto and contributors
 
     Leela Zero is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -14,11 +14,24 @@
 
     You should have received a copy of the GNU General Public License
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+
+    Additional permission under GNU GPL version 3 section 7
+
+    If you modify this Program, or any covered work, by linking or
+    combining it with NVIDIA Corporation's libraries from the
+    NVIDIA CUDA Toolkit and/or the NVIDIA CUDA Deep Neural
+    Network library and/or the NVIDIA TensorRT inference library
+    (or a modified version of those libraries), containing parts covered
+    by the terms of the respective license agreement, the licensors of
+    this Program grant you additional permission to convey the resulting
+    work.
 */
 
 #include "FastBoard.h"
 
 #include <cassert>
+#include <cctype>
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <queue>
@@ -32,7 +45,7 @@
 using namespace Utils;
 
 const int FastBoard::NBR_SHIFT;
-const int FastBoard::MAXSQ;
+const int FastBoard::NUM_VERTICES;
 const int FastBoard::NO_VERTEX;
 const int FastBoard::PASS;
 const int FastBoard::RESIGN;
@@ -42,11 +55,11 @@ const std::array<int, 2> FastBoard::s_eyemask = {
     4 * (1 << (NBR_SHIFT * WHITE))
 };
 
-const std::array<FastBoard::square_t, 4> FastBoard::s_cinvert = {
+const std::array<FastBoard::vertex_t, 4> FastBoard::s_cinvert = {
     WHITE, BLACK, EMPTY, INVAL
 };
 
-int FastBoard::get_boardsize(void) const {
+int FastBoard::get_boardsize() const {
     return m_boardsize;
 }
 
@@ -56,17 +69,17 @@ int FastBoard::get_vertex(int x, int y) const {
     assert(x >= 0 && x < m_boardsize);
     assert(y >= 0 && y < m_boardsize);
 
-    int vertex = ((y + 1) * m_squaresize) + (x + 1);
+    int vertex = ((y + 1) * m_sidevertices) + (x + 1);
 
-    assert(vertex >= 0 && vertex < m_maxsq);
+    assert(vertex >= 0 && vertex < m_numvertices);
 
     return vertex;
 }
 
 std::pair<int, int> FastBoard::get_xy(int vertex) const {
     //int vertex = ((y + 1) * (get_boardsize() + 2)) + (x + 1);
-    int x = (vertex % m_squaresize) - 1;
-    int y = (vertex / m_squaresize) - 1;
+    int x = (vertex % m_sidevertices) - 1;
+    int y = (vertex / m_sidevertices) - 1;
 
     assert(x >= 0 && x < m_boardsize);
     assert(y >= 0 && y < m_boardsize);
@@ -75,32 +88,27 @@ std::pair<int, int> FastBoard::get_xy(int vertex) const {
     return std::make_pair(x, y);
 }
 
-FastBoard::square_t FastBoard::get_square(int vertex) const {
-    assert(vertex >= 0 && vertex < MAXSQ);
-    assert(vertex >= 0 && vertex < m_maxsq);
+FastBoard::vertex_t FastBoard::get_state(int vertex) const {
+    assert(vertex >= 0 && vertex < NUM_VERTICES);
+    assert(vertex >= 0 && vertex < m_numvertices);
 
-    return m_square[vertex];
+    return m_state[vertex];
 }
 
 unsigned short FastBoard::get_liberties(int vertex) const {
-    assert(vertex >= 0 && vertex < MAXSQ);
-    assert(vertex >= 0 && vertex < m_maxsq);
+    assert(vertex >= 0 && vertex < NUM_VERTICES);
+    assert(vertex >= 0 && vertex < m_numvertices);
 
     return m_libs[m_parent[vertex]];
 }
 
-void FastBoard::set_square(int vertex, FastBoard::square_t content) {
-    assert(vertex >= 0 && vertex < MAXSQ);
-    assert(vertex >= 0 && vertex < m_maxsq);
+void FastBoard::set_state(int vertex, FastBoard::vertex_t content) {
+    assert(vertex >= 0 && vertex < NUM_VERTICES);
+    assert(vertex >= 0 && vertex < m_numvertices);
     assert(content >= BLACK && content <= INVAL);
 
-    m_square[vertex] = content;
+    m_state[vertex] = content;
 }
-
-FastBoard::square_t FastBoard::get_square(int x, int y) const {
-    return get_square(get_vertex(x, y));
-}
-
 
 int FastBoard::get_square_neighbor(int vertex, int dir) const {
     assert(0 <= dir && dir <= 3);
@@ -108,39 +116,43 @@ int FastBoard::get_square_neighbor(int vertex, int dir) const {
     return vertex + m_dirs[dir];
 }
 
+FastBoard::vertex_t FastBoard::get_state(int x, int y) const {
+    return get_state(get_vertex(x, y));
+}
+
 unsigned short FastBoard::get_liberties(int x, int y) const {
     return get_liberties(get_vertex(x, y));
 }
 
-void FastBoard::set_square(int x, int y, FastBoard::square_t content) {
-    set_square(get_vertex(x, y), content);
+void FastBoard::set_state(int x, int y, FastBoard::vertex_t content) {
+    set_state(get_vertex(x, y), content);
 }
 
 void FastBoard::reset_board(int size) {
     m_boardsize = size;
-    m_squaresize = size + 2;
-    m_maxsq = m_squaresize * m_squaresize;
+    m_sidevertices = size + 2;
+    m_numvertices = m_sidevertices * m_sidevertices;
     m_tomove = BLACK;
     m_prisoners[BLACK] = 0;
     m_prisoners[WHITE] = 0;
     m_empty_cnt = 0;
 
-    m_dirs[0] = -m_squaresize;
+    m_dirs[0] = -m_sidevertices;
     m_dirs[1] = +1;
-    m_dirs[2] = +m_squaresize;
+    m_dirs[2] = +m_sidevertices;
     m_dirs[3] = -1;
 
-    for (int i = 0; i < m_maxsq; i++) {
-        m_square[i]     = INVAL;
+    for (int i = 0; i < m_numvertices; i++) {
+        m_state[i]     = INVAL;
         m_neighbours[i] = 0;
-        m_parent[i]     = MAXSQ;
+        m_parent[i]     = NUM_VERTICES;
     }
 
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
             int vertex = get_vertex(i, j);
 
-            m_square[vertex]          = EMPTY;
+            m_state[vertex]           = EMPTY;
             m_empty_idx[vertex]       = m_empty_cnt;
             m_empty[m_empty_cnt++]    = vertex;
 
@@ -162,11 +174,11 @@ void FastBoard::reset_board(int size) {
         }
     }
 
-    m_parent[MAXSQ] = MAXSQ;
-    m_libs[MAXSQ]   = 16384;    /* we will subtract from this */
-    m_next[MAXSQ]   = MAXSQ;
+    m_parent[NUM_VERTICES] = NUM_VERTICES;
+    m_libs[NUM_VERTICES]   = 16384;    /* we will subtract from this */
+    m_next[NUM_VERTICES]   = NUM_VERTICES;
 
-    assert(m_square[NO_VERTEX] == INVAL);
+    assert(m_state[NO_VERTEX] == INVAL);
 }
 
 bool FastBoard::is_suicide(int i, int color) const {
@@ -180,12 +192,12 @@ bool FastBoard::is_suicide(int i, int color) const {
         auto ai = i + m_dirs[k];
 
         auto libs = m_libs[m_parent[ai]];
-        if (get_square(ai) == color) {
+        if (get_state(ai) == color) {
             if (libs > 1) {
                 // connecting to live group = not suicide
                 return false;
             }
-        } else if (get_square(ai) == !color) {
+        } else if (get_state(ai) == !color) {
             if (libs <= 1) {
                 // killing neighbour = not suicide
                 return false;
@@ -262,12 +274,12 @@ void FastBoard::remove_neighbour(const int vtx, const int color) {
 
 int FastBoard::calc_reach_color(int color) const {
     auto reachable = 0;
-    auto bd = std::vector<bool>(m_maxsq, false);
+    auto bd = std::vector<bool>(m_numvertices, false);
     auto open = std::queue<int>();
     for (auto i = 0; i < m_boardsize; i++) {
         for (auto j = 0; j < m_boardsize; j++) {
             auto vertex = get_vertex(i, j);
-            if (m_square[vertex] == color) {
+            if (m_state[vertex] == color) {
                 reachable++;
                 bd[vertex] = true;
                 open.push(vertex);
@@ -281,7 +293,7 @@ int FastBoard::calc_reach_color(int color) const {
 
         for (auto k = 0; k < 4; k++) {
             auto neighbor = vertex + m_dirs[k];
-            if (!bd[neighbor] && m_square[neighbor] == EMPTY) {
+            if (!bd[neighbor] && m_state[neighbor] == EMPTY) {
                 reachable++;
                 bd[neighbor] = true;
                 open.push(neighbor);
@@ -310,9 +322,9 @@ void FastBoard::display_board(int lastmove) {
         else
             myprintf(" ");
         for (int i = 0; i < boardsize; i++) {
-            if (get_square(i,j) == WHITE) {
+            if (get_state(i,j) == WHITE) {
                 myprintf("O");
-            } else if (get_square(i,j) == BLACK)  {
+            } else if (get_state(i,j) == BLACK)  {
                 myprintf("X");
             } else if (starpoint(boardsize, i, j)) {
                 myprintf("+");
@@ -343,7 +355,7 @@ void FastBoard::display_liberties(int lastmove) {
         else
             myprintf(" ");
         for (int i = 0; i < boardsize; i++) {
-            if (get_square(i,j) != EMPTY) {
+            if (get_state(i,j) != EMPTY) {
                 int libs = get_liberties(i, j);
                 if (libs > 9) { libs = 9; };
                 myprintf("%1d", libs);
@@ -375,7 +387,7 @@ void FastBoard::print_columns() {
 }
 
 void FastBoard::merge_strings(const int ip, const int aip) {
-    assert(ip != MAXSQ && aip != MAXSQ);
+    assert(ip != NUM_VERTICES && aip != NUM_VERTICES);
 
     /* merge stones */
     m_stones[ip] += m_stones[aip];
@@ -388,7 +400,7 @@ void FastBoard::merge_strings(const int ip, const int aip) {
         for (int k = 0; k < 4; k++) {
             int ai = newpos + m_dirs[k];
             // for each liberty, check if it is not shared
-            if (m_square[ai] == EMPTY) {
+            if (m_state[ai] == EMPTY) {
                 // find liberty neighbors
                 bool found = false;
                 for (int kk = 0; kk < 4; kk++) {
@@ -434,10 +446,10 @@ bool FastBoard::is_eye(const int color, const int i) const {
     colorcount[WHITE] = 0;
     colorcount[INVAL] = 0;
 
-    colorcount[m_square[i - 1 - m_squaresize]]++;
-    colorcount[m_square[i + 1 - m_squaresize]]++;
-    colorcount[m_square[i - 1 + m_squaresize]]++;
-    colorcount[m_square[i + 1 + m_squaresize]]++;
+    colorcount[m_state[i - 1 - m_sidevertices]]++;
+    colorcount[m_state[i + 1 - m_sidevertices]]++;
+    colorcount[m_state[i - 1 + m_sidevertices]]++;
+    colorcount[m_state[i + 1 + m_sidevertices]]++;
 
     if (colorcount[INVAL] == 0) {
         if (colorcount[!color] > 1) {
@@ -455,8 +467,8 @@ bool FastBoard::is_eye(const int color, const int i) const {
 std::string FastBoard::move_to_text(int move) const {
     std::ostringstream result;
 
-    int column = move % m_squaresize;
-    int row = move / m_squaresize;
+    int column = move % m_sidevertices;
+    int row = move / m_sidevertices;
 
     column--;
     row--;
@@ -468,7 +480,7 @@ std::string FastBoard::move_to_text(int move) const {
            || move == FastBoard::RESIGN
            || (column >= 0 && column < m_boardsize));
 
-    if (move >= 0 && move <= m_maxsq) {
+    if (move >= 0 && move <= m_numvertices) {
         result << static_cast<char>(column < 8 ? 'A' + column : 'A' + column + 1);
         result << (row + 1);
     } else if (move == FastBoard::PASS) {
@@ -482,11 +494,39 @@ std::string FastBoard::move_to_text(int move) const {
     return result.str();
 }
 
+int FastBoard::text_to_move(std::string move) const {
+    transform(cbegin(move), cend(move), begin(move), tolower);
+
+    if (move == "pass") {
+        return PASS;
+    } else if (move == "resign") {
+        return RESIGN;
+    } else if (move.size() < 2 || !std::isalpha(move[0]) || !std::isdigit(move[1]) || move[0] == 'i') {
+        return NO_VERTEX;
+    }
+
+    auto column = move[0] - 'a';
+    if (move[0] > 'i') {
+        --column;
+    }
+
+    int row;
+    std::istringstream parsestream(move.substr(1));
+    parsestream >> row;
+    --row;
+
+    if (row >= m_boardsize || column >= m_boardsize) {
+        return NO_VERTEX;
+    }
+
+    return get_vertex(column, row);
+}
+
 std::string FastBoard::move_to_text_sgf(int move) const {
     std::ostringstream result;
 
-    int column = move % m_squaresize;
-    int row = move / m_squaresize;
+    int column = move % m_sidevertices;
+    int row = move / m_sidevertices;
 
     column--;
     row--;
@@ -501,7 +541,7 @@ std::string FastBoard::move_to_text_sgf(int move) const {
     // SGF inverts rows
     row = m_boardsize - row - 1;
 
-    if (move >= 0 && move <= m_maxsq) {
+    if (move >= 0 && move <= m_numvertices) {
         if (column <= 25) {
             result << static_cast<char>('a' + column);
         } else {
@@ -608,7 +648,7 @@ std::string FastBoard::get_stone_list() const {
         for (int j = 0; j < m_boardsize; j++) {
             int vertex = get_vertex(i, j);
 
-            if (get_square(vertex) != EMPTY) {
+            if (get_state(vertex) != EMPTY) {
                 result += move_to_text(vertex) + " ";
             }
         }

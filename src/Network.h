@@ -1,6 +1,6 @@
 /*
     This file is part of Leela Zero.
-    Copyright (C) 2017-2018 Gian-Carlo Pascutto and contributors
+    Copyright (C) 2017-2019 Gian-Carlo Pascutto and contributors
 
     Leela Zero is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -14,6 +14,17 @@
 
     You should have received a copy of the GNU General Public License
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+
+    Additional permission under GNU GPL version 3 section 7
+
+    If you modify this Program, or any covered work, by linking or
+    combining it with NVIDIA Corporation's libraries from the
+    NVIDIA CUDA Toolkit and/or the NVIDIA CUDA Deep Neural
+    Network library and/or the NVIDIA TensorRT inference library
+    (or a modified version of those libraries), containing parts covered
+    by the terms of the respective license agreement, the licensors of
+    this Program grant you additional permission to convey the resulting
+    work.
 */
 
 #ifndef NETWORK_H_INCLUDED
@@ -53,6 +64,7 @@ constexpr auto WINOGRAD_P = WINOGRAD_WTILES * WINOGRAD_WTILES;
 constexpr auto SQ2 = 1.4142135623730951f; // Square root of 2
 
 class Network {
+    using ForwardPipeWeights = ForwardPipe::ForwardPipeWeights;
 public:
     static constexpr auto NUM_SYMMETRIES = 8;
     static constexpr auto IDENTITY_SYMMETRY = 0;
@@ -65,7 +77,9 @@ public:
     Netresult get_output(const GameState* const state,
                          const Ensemble ensemble,
                          const int symmetry = -1,
-                         const bool skip_cache = false);
+                         const bool read_cache = true,
+                         const bool write_cache = true,
+                         const bool force_selfcheck = false);
 
     // File format version
     static constexpr auto INPUT_MOVES = 8;
@@ -79,6 +93,7 @@ public:
     static constexpr auto INPUT_CHANNELS = 2 * INPUT_MOVES + 1 + 2 * LIBERTY_PLANES + 2 + 2;
     static constexpr auto OUTPUTS_POLICY = 2;
     static constexpr auto OUTPUTS_VALUE = 1;
+    static constexpr auto VALUE_LAYER = 256;
 
     void initialize(int playouts, const std::string & weightsfile);
 
@@ -93,6 +108,11 @@ public:
     static std::pair<int, int> get_symmetry(const std::pair<int, int>& vertex,
                                             const int symmetry,
                                             const int board_size = BOARD_SIZE);
+
+    size_t get_estimated_size();
+    size_t get_estimated_cache_size();
+    void nncache_resize(int max_count);
+
 private:
     std::pair<int, int> load_v1_network(std::istream& wtfile);
     std::pair<int, int> load_network_file(const std::string& filename);
@@ -136,51 +156,43 @@ private:
                                  std::vector<float>::iterator escapes,
                                  const int symmetry);
     bool probe_cache(const GameState* const state, Network::Netresult& result);
+    std::unique_ptr<ForwardPipe>&& init_net(int channels,
+                                            std::unique_ptr<ForwardPipe>&& pipe);
+#ifdef USE_HALF
+    void select_precision(int channels);
+#endif
     std::unique_ptr<ForwardPipe> m_forward;
 #ifdef USE_OPENCL_SELFCHECK
-    void compare_net_outputs(Netresult& data, Netresult& ref);
+    void compare_net_outputs(const Netresult& data, const Netresult& ref);
     std::unique_ptr<ForwardPipe> m_forward_cpu;
-
-    // Records the result of most recent selfchecks
-    std::deque<bool> m_selfcheck_fails;
-
-    // Mutex that protects m_selfcheck_fails
-    SMP::Mutex m_selfcheck_mutex;
 #endif
 
     NNCache m_nncache;
 
-    // Input + residual block tower
-    std::vector<std::vector<float>> m_conv_weights;
-    std::vector<std::vector<float>> m_batchnorm_betas;
-    std::vector<std::vector<float>> m_batchnorm_gammas;
-    std::vector<std::vector<float>> m_batchnorm_means;
-    std::vector<std::vector<float>> m_batchnorm_stddivs;
+    size_t estimated_size{0};
 
-    std::vector<std::vector<float>> m_se_fc1_w;
-    std::vector<std::vector<float>> m_se_fc1_b;
-    std::vector<std::vector<float>> m_se_fc2_w;
-    std::vector<std::vector<float>> m_se_fc2_b;
+    // Residual tower
+    std::shared_ptr<ForwardPipeWeights> m_fwd_weights;
 
     // Policy head
-    std::vector<float> m_conv_pol_w;
-    std::vector<float> m_conv_pol_b;
-    std::array<float, 2> m_bn_pol_w1;
-    std::array<float, 2> m_bn_pol_w2;
+    std::array<float, OUTPUTS_POLICY> m_bn_pol_w1;
+    std::array<float, OUTPUTS_POLICY> m_bn_pol_w2;
 
-    std::array<float, (BOARD_SQUARES + 1) * BOARD_SQUARES * 2> m_ip_pol_w;
-    std::array<float, BOARD_SQUARES + 1> m_ip_pol_b;
+    std::array<float, OUTPUTS_POLICY
+                      * NUM_INTERSECTIONS
+                      * POTENTIAL_MOVES> m_ip_pol_w;
+    std::array<float, POTENTIAL_MOVES> m_ip_pol_b;
 
     // Value head
-    std::vector<float> m_conv_val_w;
-    std::vector<float> m_conv_val_b;
-    std::array<float, 1> m_bn_val_w1;
-    std::array<float, 1> m_bn_val_w2;
+    std::array<float, OUTPUTS_VALUE> m_bn_val_w1;
+    std::array<float, OUTPUTS_VALUE> m_bn_val_w2;
 
-    std::array<float, BOARD_SQUARES * 256> m_ip1_val_w;
-    std::array<float, 256> m_ip1_val_b;
+    std::array<float, OUTPUTS_VALUE
+                      * NUM_INTERSECTIONS
+                      * VALUE_LAYER> m_ip1_val_w;
+    std::array<float, VALUE_LAYER> m_ip1_val_b;
 
-    std::array<float, 256> m_ip2_val_w;
+    std::array<float, VALUE_LAYER> m_ip2_val_w;
     std::array<float, 1> m_ip2_val_b;
     bool m_value_head_not_stm;
 };

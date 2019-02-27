@@ -1,6 +1,6 @@
 /*
     This file is part of Leela Zero.
-    Copyright (C) 2017-2018 Gian-Carlo Pascutto and contributors
+    Copyright (C) 2017-2019 Gian-Carlo Pascutto and contributors
 
     Leela Zero is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -14,6 +14,17 @@
 
     You should have received a copy of the GNU General Public License
     along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+
+    Additional permission under GNU GPL version 3 section 7
+
+    If you modify this Program, or any covered work, by linking or
+    combining it with NVIDIA Corporation's libraries from the
+    NVIDIA CUDA Toolkit and/or the NVIDIA CUDA Deep Neural
+    Network library and/or the NVIDIA TensorRT inference library
+    (or a modified version of those libraries), containing parts covered
+    by the terms of the respective license agreement, the licensors of
+    this Program grant you additional permission to convey the resulting
+    work.
 */
 
 #ifndef OPENCL_H_INCLUDED
@@ -86,9 +97,9 @@ public:
     void push_input_convolution(unsigned int filter_size,
                        unsigned int channels,
                        unsigned int outputs,
-                       const std::vector<float>& weights,
-                       const std::vector<float>& means,
-                       const std::vector<float>& variances) {
+                       const std::vector<net_t>& weights,
+                       const std::vector<net_t>& means,
+                       const std::vector<net_t>& variances) {
         size_t layer = get_layer_count();
         push_weights(layer, weights);
         push_weights(layer, means);
@@ -103,16 +114,16 @@ public:
                        unsigned int channels,
                        unsigned int outputs,
                        unsigned int se_fc_outputs,
-                       const std::vector<float>& weights_1,
-                       const std::vector<float>& means_1,
-                       const std::vector<float>& variances_1,
-                       const std::vector<float>& weights_2,
-                       const std::vector<float>& means_2,
-                       const std::vector<float>& variances_2,
-                       const std::vector<float>& se_fc1_w,
-                       const std::vector<float>& se_fc1_b,
-                       const std::vector<float>& se_fc2_w,
-                       const std::vector<float>& se_fc2_b) {
+                       const std::vector<net_t>& weights_1,
+                       const std::vector<net_t>& means_1,
+                       const std::vector<net_t>& variances_1,
+                       const std::vector<net_t>& weights_2,
+                       const std::vector<net_t>& means_2,
+                       const std::vector<net_t>& variances_2,
+                       const std::vector<net_t>& se_fc1_w,
+                       const std::vector<net_t>& se_fc1_b,
+                       const std::vector<net_t>& se_fc2_w,
+                       const std::vector<net_t>& se_fc2_b) {
         size_t layer = get_layer_count();
         push_weights(layer, weights_1);
         push_weights(layer, means_1);
@@ -134,7 +145,7 @@ public:
     void push_convolve(unsigned int filter_size,
                        unsigned int channels,
                        unsigned int outputs,
-                       const std::vector<float>& weights) {
+                       const std::vector<net_t>& weights) {
         (void)filter_size;
         assert(filter_size == 1);
 
@@ -158,10 +169,10 @@ public:
 private:
     using weight_slice_t = std::vector<cl::Buffer>::const_iterator;
 
-    void push_weights(size_t layer, const std::vector<float>& weights) {
+    void push_weights(size_t layer, const std::vector<net_t>& weights) {
         add_weights(layer, weights.size(), weights.data());
     }
-    void add_weights(size_t layer, size_t size, const float* weights);
+    void add_weights(size_t layer, size_t size, const net_t* weights);
 
     void convolve3(OpenCLContext & opencl_context,
                     int channels, int outputs,
@@ -218,30 +229,38 @@ class OpenCL {
     friend class OpenCL_Network<net_t>;
     friend class Tuner<net_t>;
 public:
-    void initialize(const int channels, int gpu, bool silent = false);
+    OpenCL(int gpu, bool silent = false);
+
+    void initialize(const int channels, size_t batch_size = 1);
     void ensure_context_initialized(OpenCLContext & opencl_context);
     std::string get_device_name();
+    bool has_fp16_compute();
 
-    std::vector<size_t> get_sgemm_tuners(void);
+    std::vector<size_t> get_sgemm_tuners();
 
     cl::Device m_device;
     cl::Context m_context;
 private:
-    void tune_sgemm(void);
+    void tune_sgemm();
     void process_tuners(std::string tuners);
 
+    size_t m_batch_size = 1;
     cl::Program m_program;
     std::string m_cl_args;
 
     struct sgemm_tuners {
         size_t mwg, nwg, kwg;
         size_t vwm, vwn;
+        size_t mdima, ndimb;
         size_t mdimc, ndimc;
+        size_t tce;
     };
     sgemm_tuners m_sgemm_tuners;
     size_t m_wavefront_size{0};
     size_t m_max_workgroup_size{0};
     std::vector<size_t> m_max_workgroup_dims;
+    bool m_fp16_compute{false};
+    bool m_tensorcore{false};
     bool m_init_ok{false};
 };
 
