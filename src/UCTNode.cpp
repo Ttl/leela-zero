@@ -40,6 +40,7 @@
 #include <numeric>
 #include <utility>
 #include <vector>
+#include <boost/math/distributions/students_t.hpp>
 
 #include "UCTNode.h"
 #include "FastBoard.h"
@@ -224,22 +225,17 @@ int UCTNode::get_visits() const {
     return m_visits;
 }
 
-float approx_t(float v, float z) {
-    // Fast approximation to inverse CDF of student-t distribution.
-    if (v > 100) {
-        return z;
-    }
-    return z + 26.0f / v + 3.50f / (v * v * v);
-}
-
 float UCTNode::get_conf_bound(float default_bound) const {
     int visits = get_visits();
-    if (visits < 1) {
+    if (visits < 2) {
         return default_bound;
     }
     float stddev = get_stddev(1.0f) / std::sqrt(visits);
-    // Initial variance estimate counts as one degree of freedom.
-    return approx_t(visits, cfg_conf_z) * stddev;
+
+    boost::math::students_t dist(visits - 1);
+    auto z = boost::math::quantile(boost::math::complement(dist, cfg_ci_alpha));
+
+    return z * stddev;
 }
 
 float UCTNode::get_lcb(int color) const {
