@@ -84,6 +84,7 @@ public:
     void virtual_loss();
     void virtual_loss_undo();
     void update(float eval);
+    float get_conf_bound(float default_bound) const;
     float get_lcb(int color) const;
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch

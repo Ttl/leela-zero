@@ -131,6 +131,7 @@ public:
     float get_policy() const;
     float get_stddev(float default_stddev) const;
     float get_lcb(int color) const;
+    float get_conf_bound(float default_bound) const;
     bool active() const;
     int get_move() const;
     // this can only be called if it is an inflated pointer

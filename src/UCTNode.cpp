@@ -232,15 +232,20 @@ float approx_t(float v, float z) {
     return z + 26.0f / v + 3.50f / (v * v * v);
 }
 
-float UCTNode::get_lcb(int color) const {
-    // Lower confidence bound of winrate.
+float UCTNode::get_conf_bound(float default_bound) const {
     int visits = get_visits();
-    float mean = get_raw_eval(color);
-    if (visits < 2) {
-        return mean - 1.0f;
+    if (visits < 1) {
+        return default_bound;
     }
     float stddev = get_stddev(1.0f) / std::sqrt(visits);
-    return mean - approx_t(visits - 1, cfg_conf_z) * stddev;
+    // Initial variance estimate counts as one degree of freedom.
+    return approx_t(visits, cfg_conf_z) * stddev;
+}
+
+float UCTNode::get_lcb(int color) const {
+    // Lower confidence bound of winrate.
+    float mean = get_raw_eval(color);
+    return mean - get_conf_bound(1.0f);
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
@@ -294,8 +299,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
     }
 
-    const auto numerator = std::sqrt(double(parentvisits) *
-            std::log(cfg_logpuct * double(parentvisits) + cfg_logconst));
+    const auto numerator = 0.717f * std::sqrt(double(parentvisits));
     const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
     // Estimated eval for unknown nodes = original parent NN eval - reduction
     const auto fpu_eval = get_net_eval(color) - fpu_reduction;
@@ -309,16 +313,19 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
 
         auto winrate = fpu_eval;
+        auto conf_bound = numerator;
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
             // if we can avoid so, because we'd block on it.
             winrate = -1.0f - fpu_reduction;
         } else if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
+            conf_bound = child.get_conf_bound(numerator);
         }
         const auto psa = child.get_policy();
-        const auto denom = 1.0 + child.get_visits();
-        const auto puct = cfg_puct * psa * (numerator / denom);
+        //const auto denom = 1.0 + child.get_visits();
+        //const auto puct = cfg_puct * psa * (numerator / denom);
+        const auto puct = cfg_puct * psa * conf_bound;
         const auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
 
