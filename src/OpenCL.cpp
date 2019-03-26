@@ -315,7 +315,7 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
                       conv2_weights,
                       nullptr,
                       bn2_weights,
-                      use_inout, skip_next_in_trans, true,
+                      use_inout, skip_next_in_trans, false,
                       false,
                       batch_size);
 
@@ -407,13 +407,27 @@ void OpenCL_Network<net_t>::squeeze_excitation(
     }
 
 
-  innerproduct(opencl_context, bufferTemp1, weights[0], weights[1], bufferTemp2, channels,
-               fc_outputs, true, batch_size);
+    innerproduct(opencl_context, bufferTemp1, weights[0], weights[1],
+                 bufferTemp2, channels, fc_outputs, true, batch_size);
 
-  innerproduct(opencl_context, bufferTemp2, weights[2], weights[3], bufferTemp1, fc_outputs,
-               2 * channels, false, batch_size);
+    //const auto finalSize = fc_outputs * batch_size;
+    //std::vector<float> output(finalSize);
+    //queue.enqueueReadBuffer(bufferTemp2, CL_FALSE, 0, finalSize * sizeof(float), output.data());
 
-  try {
+    //for (auto b = 0; b < batch_size; b++) {
+    //    for(auto i = 0;i < fc_outputs;i ++) {
+    //        myprintf("%f ", output[b * fc_outputs + i]);
+    //    }
+    //    myprintf("\n");
+    //}
+    //myprintf("\n");
+
+
+    innerproduct(opencl_context, bufferTemp2, weights[2], weights[3],
+                 bufferTemp1, fc_outputs, 2 * channels, false, batch_size);
+
+
+    try {
         apply_se_kernel.setArg(0, channels);
         apply_se_kernel.setArg(1, batch_size);
         apply_se_kernel.setArg(2, bufferIn);
@@ -439,9 +453,6 @@ void OpenCL_Network<net_t>::innerproduct(
                   int inputs, int outputs,
                   bool relu,
                   int batch_size) {
-
-    // TODO: innerproduct batching
-    assert(batch_size == 1);
 
     auto sgemv_kernel = opencl_context.m_sgemv_kernel;
     cl::CommandQueue & queue = opencl_context.m_commandqueue;
@@ -469,8 +480,8 @@ void OpenCL_Network<net_t>::innerproduct(
         sgemv_kernel.setArg(10, static_cast<int>(relu));
 
         queue.enqueueNDRangeKernel(sgemv_kernel, cl::NullRange,
-                                   cl::NDRange(global_size),
-                                   cl::NDRange(local_size));
+                                   cl::NDRange(global_size, batch_size),
+                                   cl::NDRange(local_size, 1));
     } catch (const cl::Error &e) {
         std::cerr << "Error in innerproduct: " << e.what() << ": "
 	        << e.err() << std::endl;
@@ -548,8 +559,7 @@ void OpenCL_Network<net_t>::convolve3(OpenCLContext & opencl_context,
             assert(relu);
 
             queue.enqueueNDRangeKernel(in_transform_kernel, cl::NullRange,
-                                       cl::NDRange(wgs, channels),
-                                       cl::NDRange(wgs, 1));
+                                       cl::NDRange(wgs, channels));
         } catch (const cl::Error &e) {
             std::cerr << "Error in convolve3/in: " << e.what() << ": "
                 << e.err() << std::endl;

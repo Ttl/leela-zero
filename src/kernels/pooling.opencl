@@ -37,7 +37,7 @@ R"(
             real acc = ZERO;
 
             for ( int i = 0; i < BOARD_SIZE; i++) {
-                acc += vload_net_t(c * NUM_INTERSECTIONS + col * BOARD_SIZE + i, in);
+                acc += vload_net_t(c * NUM_INTERSECTIONS + i * BOARD_SIZE + col, in);
             }
             row_acc[lid] = acc;
         }
