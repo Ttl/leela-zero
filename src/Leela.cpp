@@ -121,7 +121,7 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
     }
 
     if (cfg_num_threads < cfg_batch_size) {
-        printf("Number of threads = %d must be larger than batch size = %d\n", cfg_num_threads, cfg_batch_size);
+        printf("Number of threads = %d must be no smaller than batch size = %d\n", cfg_num_threads, cfg_batch_size);
         exit(EXIT_FAILURE);
     }
 
@@ -203,6 +203,7 @@ static void parse_commandline(int argc, char *argv[]) {
         ("logconst", po::value<float>())
         ("softmax_temp", po::value<float>())
         ("fpu_reduction", po::value<float>())
+        ("ci_alpha", po::value<float>())
         ;
 #endif
     // These won't be shown, we use them to catch incorrect usage of the
@@ -277,6 +278,9 @@ static void parse_commandline(int argc, char *argv[]) {
     }
     if (vm.count("fpu_reduction")) {
         cfg_fpu_reduction = vm["fpu_reduction"].as<float>();
+    }
+    if (vm.count("ci_alpha")) {
+        cfg_ci_alpha = vm["ci_alpha"].as<float>();
     }
 #endif
 
@@ -494,6 +498,8 @@ void init_global_objects() {
     // improves reproducibility across platforms.
     Random::get_Rng().seedrandom(cfg_rng_seed);
 
+    Utils::create_z_table();
+
     initialize_network();
 }
 
@@ -533,8 +539,7 @@ int main(int argc, char *argv[]) {
     auto maingame = std::make_unique<GameState>();
 
     /* set board limits */
-    auto komi = 7.5f;
-    maingame->init_game(BOARD_SIZE, komi);
+    maingame->init_game(BOARD_SIZE, KOMI);
 
     if (cfg_benchmark) {
         cfg_quiet = false;

@@ -100,7 +100,7 @@ float Network::benchmark_time(int centiseconds) {
     std::atomic<int> runcount{0};
 
     GameState state;
-    state.init_game(BOARD_SIZE, 7.5);
+    state.init_game(BOARD_SIZE, KOMI);
 
     // As a sanity run, try one run with self check.
     // Isn't enough to guarantee correctness but better than nothing,
@@ -279,7 +279,7 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
         if (!ok || it_line != line.cend()) {
             myprintf("\nFailed to parse weight file. Error on line %d.\n",
                     linecount + 2); //+1 from version line, +1 from 0-indexing
-            return {0,0};
+            return {0, 0};
         }
         if (linecount < input_weights) {
             if (linecount % 5 == 0) {
@@ -360,7 +360,14 @@ std::pair<int, int> Network::load_v1_network(std::istream& wtfile) {
                                    begin(m_bn_pol_w1)); break;
                 case  3: std::copy(cbegin(weights), cend(weights),
                                    begin(m_bn_pol_w2)); break;
-                case  4: std::copy(cbegin(weights), cend(weights),
+                case  4: if (weights.size() != OUTPUTS_POLICY
+                                               * NUM_INTERSECTIONS
+                                               * POTENTIAL_MOVES) {
+                             myprintf("The weights file is not for %dx%d boards.\n",
+                                      BOARD_SIZE, BOARD_SIZE);
+                             return {0, 0};
+                         }
+                         std::copy(cbegin(weights), cend(weights),
                                    begin(m_ip_pol_w)); break;
                 case  5: std::copy(cbegin(weights), cend(weights),
                                    begin(m_ip_pol_b)); break;
