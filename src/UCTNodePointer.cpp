@@ -131,6 +131,12 @@ int UCTNodePointer::get_visits() const {
     return 0;
 }
 
+int UCTNodePointer::get_virtual_loss() const {
+    auto v = m_data.load();
+    if (is_inflated(v)) return read_ptr(v)->get_virtual_loss();
+    return 0;
+}
+
 float UCTNodePointer::get_policy() const {
     auto v = m_data.load();
     if (is_inflated(v)) return read_ptr(v)->get_policy();

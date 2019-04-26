@@ -246,6 +246,10 @@ int UCTNode::get_visits() const {
     return m_visits;
 }
 
+int UCTNode::get_virtual_loss() const {
+    return m_virtual_loss;
+}
+
 float UCTNode::get_eval_lcb(int color) const {
     // Lower confidence bound of winrate.
     auto visits = get_visits();
@@ -308,7 +312,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         if (child.valid()) {
             parentvisits += child.get_visits();
             max_policy = std::max(max_policy, child.get_policy());
-            if (child.get_visits() == 0) {
+            if (child.get_visits() == 0 && child.get_virtual_loss() == 0) {
                 max_unvisited_policy = std::max(max_unvisited_policy, child.get_policy());
             }
         }

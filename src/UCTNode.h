@@ -74,6 +74,7 @@ public:
     bool active() const;
     int get_move() const;
     int get_visits() const;
+    int get_virtual_loss() const;
     float get_policy() const;
     void set_policy(float policy);
     float get_eval_variance(float default_var = 0.0f) const;
