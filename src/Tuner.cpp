@@ -670,9 +670,9 @@ std::string Tuner<net_t>::sgemm_tuners_from_line(std::string line,
         return "";
     }
 
-    //if (s[7] != m_opencl.get_device_name()) {
-    //    return "";
-    //}
+    if (s[7] != m_opencl.get_device_name()) {
+        return "";
+    }
 
     return s[6];
 }

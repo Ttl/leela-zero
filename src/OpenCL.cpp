@@ -228,7 +228,6 @@ void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
             m_opencl.m_context,
             CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, alloc_pool_size);
 
-
         opencl_context.m_buffers_allocated = true;
     }
 
@@ -1076,6 +1075,11 @@ void OpenCL<net_t>::initialize(const int channels, size_t batch_size) {
 template <typename net_t>
 bool OpenCL<net_t>::has_fp16_compute() {
     return m_fp16_compute;
+}
+
+template <typename net_t>
+bool OpenCL<net_t>::has_tensor_cores() {
+    return m_tensorcore;
 }
 
 template <typename net_t>
