@@ -393,7 +393,7 @@ void OpenCL_Network<net_t>::squeeze_excitation(
     cl::CommandQueue & queue = opencl_context.m_commandqueue;
 
     try {
-        pooling_kernel.setArg(0, channels);
+        pooling_kernel.setArg(0, batch_size * channels);
         pooling_kernel.setArg(1, bufferIn);
         pooling_kernel.setArg(2, bufferTemp1);
 
@@ -409,19 +409,6 @@ void OpenCL_Network<net_t>::squeeze_excitation(
 
     innerproduct(opencl_context, bufferTemp1, weights[0], weights[1],
                  bufferTemp2, channels, fc_outputs, true, batch_size);
-
-    //const auto finalSize = fc_outputs * batch_size;
-    //std::vector<float> output(finalSize);
-    //queue.enqueueReadBuffer(bufferTemp2, CL_FALSE, 0, finalSize * sizeof(float), output.data());
-
-    //for (auto b = 0; b < batch_size; b++) {
-    //    for(auto i = 0;i < fc_outputs;i ++) {
-    //        myprintf("%f ", output[b * fc_outputs + i]);
-    //    }
-    //    myprintf("\n");
-    //}
-    //myprintf("\n");
-
 
     innerproduct(opencl_context, bufferTemp2, weights[2], weights[3],
                  bufferTemp1, fc_outputs, 2 * channels, false, batch_size);

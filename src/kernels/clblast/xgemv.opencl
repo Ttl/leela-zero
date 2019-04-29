@@ -70,13 +70,11 @@ INLINE_FUNC void StoreValue(__global real* restrict y, const int offset, const r
 __kernel __attribute__((reqd_work_group_size(WGS1, 1, 1)))
 void Xgemv(const int m, const int n,
                     const __global real* restrict agm, const int a_offset, const int a_ld,
-                    const __global real* restrict x, const int x_offset,
-                    __global real* y, const int y_offset,
+                    const __global real* restrict xgm, const int x_offset,
+                    __global real* ygm, const int y_offset,
                     __global real* bias, const int relu) {
 
   const int batch = get_global_id(1);
-  __global real* xgm = x + batch * n;
-  __global real* ygm = y + batch * m;
 
   // Local memory for the vector X
   __local real xlm[WGS1];
@@ -98,7 +96,7 @@ void Xgemv(const int m, const int n,
 
     // Loads the vector X into local memory
     const int lid = get_local_id(0);
-    xlm[lid] = LoadValue(xgm, (kwg + lid) + x_offset);
+    xlm[lid] = LoadValue(xgm, (kwg + lid) + x_offset + batch * n);
 
     // Synchronizes all threads in a workgroup
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -134,7 +132,7 @@ void Xgemv(const int m, const int n,
       // The multiply-add function for the remainder part (not divisable by WGS1)
       for (int k=n_floor; k<n; ++k) {
         real value = LoadMatrixA(agm, k, gid, a_ld, a_offset);
-        const real x_k = LoadValue(xgm, k + x_offset);
+        const real x_k = LoadValue(xgm, k + x_offset + batch * n);
         MultiplyAdd(acc1[_w], x_k, value);
 
       }
@@ -144,7 +142,7 @@ void Xgemv(const int m, const int n,
 	  if (relu) {
 	    out = out > 0.0f ? out : 0.0f;
 	  }
-      StoreValue(ygm, gid + y_offset, out);
+      StoreValue(ygm, gid + y_offset + batch * m, out);
     }
   }
 }
